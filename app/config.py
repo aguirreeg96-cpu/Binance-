@@ -1,11 +1,61 @@
 from decimal import Decimal
 from functools import lru_cache
-from typing import Literal
+from urllib.parse import urlparse
 
 from pydantic import field_validator, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 from app.schemas.common import TradingMode
+
+# ---------------------------------------------------------------------------
+# URL allowlists (checked by hostname, not string search)
+# ---------------------------------------------------------------------------
+_ALLOWED_MARKET_DATA_HOSTS = frozenset({"data-api.binance.vision"})
+_ALLOWED_TRADING_HOSTS = frozenset({"demo-api.binance.com"})
+_ALLOWED_MARKET_WS_HOSTS = frozenset({"data-stream.binance.vision"})
+_REJECTED_ANYWHERE = frozenset({
+    "api.binance.com",
+    "ws-api.binance.com",
+    "stream.binance.com",
+})
+
+
+def _parse_and_guard(
+    url: str,
+    field: str,
+    allowed_hosts: frozenset[str],
+    allowed_schemes: tuple[str, ...],
+) -> str:
+    parsed = urlparse(url)
+
+    if parsed.username or parsed.password:
+        raise ValueError(
+            f"{field}: URL must not contain embedded credentials: {url!r}"
+        )
+
+    if parsed.scheme not in allowed_schemes:
+        raise ValueError(
+            f"{field}: scheme must be one of {allowed_schemes}, "
+            f"got {parsed.scheme!r} in {url!r}"
+        )
+
+    hostname = (parsed.hostname or "").lower()
+
+    if hostname in _REJECTED_ANYWHERE:
+        raise ValueError(
+            f"{field}: host {hostname!r} is a production Binance endpoint "
+            "and is not permitted in this application."
+        )
+
+    if hostname not in allowed_hosts:
+        raise ValueError(
+            f"{field}: host {hostname!r} is not in the allowlist "
+            f"{set(allowed_hosts)}. "
+            "Check for typos — subdomain attacks like "
+            "'data-api.binance.vision.evil.com' are rejected."
+        )
+
+    return url
 
 
 class Settings(BaseSettings):
@@ -19,11 +69,16 @@ class Settings(BaseSettings):
     # Trading mode — defaults to paper (never real money)
     trading_mode: TradingMode = TradingMode.PAPER
 
-    # Binance API — loaded from env, never hardcoded
+    # Binance API credentials — only required for DEMO mode
     binance_api_key: str = ""
     binance_api_secret: str = ""
-    binance_base_url: str = "https://testnet.binance.vision"
-    binance_ws_url: str = "wss://testnet.binance.vision/ws"
+
+    # Market data (public REST — no auth required)
+    binance_market_data_url: str = "https://data-api.binance.vision"
+    # Order execution (DEMO only)
+    binance_trading_url: str = "https://demo-api.binance.com"
+    # WebSocket market data (future Stage 7)
+    binance_market_ws_url: str = "wss://data-stream.binance.vision"
 
     # Trading parameters
     trading_symbol: str = "BTCUSDT"
@@ -61,11 +116,22 @@ class Settings(BaseSettings):
     # Demo mode confirmation
     demo_approval_timeout: int = 60
 
+    # Market data HTTP client settings
+    market_data_timeout: float = 30.0
+    market_data_max_retries: int = 3
+    market_data_max_retry_after: int = 60  # seconds cap on Retry-After
+    market_data_max_requests: int = 500    # max pages per download job
+    market_data_max_range_days: int = 365  # API validation guard
+
     # Application
     app_host: str = "0.0.0.0"
     app_port: int = 8000
     log_level: str = "INFO"
     database_url: str = "sqlite:///./trading.db"
+
+    # ---------------------------------------------------------------------------
+    # Validators
+    # ---------------------------------------------------------------------------
 
     @field_validator("trading_mode", mode="before")
     @classmethod
@@ -77,17 +143,26 @@ class Settings(BaseSettings):
             )
         return v
 
-    @field_validator("binance_base_url", "binance_ws_url", mode="before")
+    @field_validator("binance_market_data_url", mode="before")
     @classmethod
-    def reject_production_urls(cls, v: str) -> str:
-        production_hosts = ["api.binance.com", "stream.binance.com"]
-        for host in production_hosts:
-            if host in str(v):
-                raise ValueError(
-                    f"Production Binance URL detected: {v!r}. "
-                    "Only testnet/demo endpoints are permitted."
-                )
-        return v
+    def validate_market_data_url(cls, v: str) -> str:
+        return _parse_and_guard(
+            v, "BINANCE_MARKET_DATA_URL", _ALLOWED_MARKET_DATA_HOSTS, ("https",)
+        )
+
+    @field_validator("binance_trading_url", mode="before")
+    @classmethod
+    def validate_trading_url(cls, v: str) -> str:
+        return _parse_and_guard(
+            v, "BINANCE_TRADING_URL", _ALLOWED_TRADING_HOSTS, ("https",)
+        )
+
+    @field_validator("binance_market_ws_url", mode="before")
+    @classmethod
+    def validate_market_ws_url(cls, v: str) -> str:
+        return _parse_and_guard(
+            v, "BINANCE_MARKET_WS_URL", _ALLOWED_MARKET_WS_HOSTS, ("wss",)
+        )
 
     @model_validator(mode="after")
     def validate_demo_requires_credentials(self) -> "Settings":
@@ -98,6 +173,10 @@ class Settings(BaseSettings):
                     "to be set in your .env file."
                 )
         return self
+
+    # ---------------------------------------------------------------------------
+    # Helpers — never expose raw secrets
+    # ---------------------------------------------------------------------------
 
     def masked_api_key(self) -> str:
         if not self.binance_api_key:

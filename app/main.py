@@ -2,11 +2,10 @@ import logging
 from contextlib import asynccontextmanager
 
 from fastapi import FastAPI
-from fastapi.responses import JSONResponse
 
 from app.config import get_settings
-from app.database import init_db
-from app.schemas.common import TradingMode
+from app.database import run_migrations, verify_db_connection
+from app.market_data.client import BinanceMarketDataClient
 
 logger = logging.getLogger(__name__)
 
@@ -25,26 +24,39 @@ BANNER = """
 async def lifespan(app: FastAPI):
     settings = get_settings()
 
-    # Configure logging
     logging.basicConfig(
         level=getattr(logging, settings.log_level.upper(), logging.INFO),
         format="%(asctime)s [%(levelname)s] %(name)s: %(message)s",
     )
 
-    # Print safety banner — always visible at startup
     print(BANNER)
     logger.warning("=" * 60)
-    logger.warning("STARTING IN MODE: %s", settings.trading_mode.upper())
-    logger.warning("Symbol: %s | Interval: %s", settings.trading_symbol, settings.trading_interval)
+    logger.warning("STARTING IN MODE: %s", settings.trading_mode.value.upper())
+    logger.warning(
+        "Symbol: %s | Interval: %s",
+        settings.trading_symbol,
+        settings.trading_interval,
+    )
     logger.warning("API Key: %s", settings.masked_api_key())
+    logger.warning("Market data URL: %s", settings.binance_market_data_url)
     logger.warning("=" * 60)
 
-    # Initialize database
-    init_db()
-    logger.info("Database initialized.")
+    # Apply DB migrations (alembic upgrade head)
+    run_migrations()
+    verify_db_connection()
+
+    # Create shared market data client (no API key needed)
+    market_client = BinanceMarketDataClient(
+        base_url=settings.binance_market_data_url,
+        timeout=settings.market_data_timeout,
+        max_retries=settings.market_data_max_retries,
+        max_retry_after=settings.market_data_max_retry_after,
+    )
+    app.state.market_data_client = market_client
 
     yield
 
+    await market_client.close()
     logger.info("Application shutting down.")
 
 
@@ -57,17 +69,21 @@ def create_app() -> FastAPI:
             "⚠ PAPER/TEST environment only. "
             "No real money. Educational purposes."
         ),
-        version="0.1.0",
+        version="0.2.0",
         docs_url="/docs",
         redoc_url="/redoc",
         lifespan=lifespan,
     )
 
+    # Routers
+    from app.api.market_data import router as market_data_router
+    app.include_router(market_data_router)
+
     @app.get("/health", tags=["system"])
     async def health():
         return {
             "status": "ok",
-            "mode": settings.trading_mode,
+            "mode": settings.trading_mode.value,
             "symbol": settings.trading_symbol,
             "interval": settings.trading_interval,
             "warning": "PAPER/TEST environment — no real money",
@@ -75,9 +91,8 @@ def create_app() -> FastAPI:
 
     @app.get("/config", tags=["system"])
     async def config_summary():
-        """Return non-sensitive configuration for inspection."""
         return {
-            "trading_mode": settings.trading_mode,
+            "trading_mode": settings.trading_mode.value,
             "symbol": settings.trading_symbol,
             "interval": settings.trading_interval,
             "risk_per_trade": str(settings.risk_per_trade),
@@ -92,6 +107,7 @@ def create_app() -> FastAPI:
             "atr_period": settings.atr_period,
             "atr_sl_multiplier": str(settings.atr_sl_multiplier),
             "rr_ratio": str(settings.rr_ratio),
+            "market_data_url": settings.binance_market_data_url,
         }
 
     return app

@@ -1,7 +1,11 @@
-from sqlalchemy import create_engine, event
+import logging
+
+from sqlalchemy import create_engine, event, text
 from sqlalchemy.orm import DeclarativeBase, Session, sessionmaker
 
 from app.config import get_settings
+
+logger = logging.getLogger(__name__)
 
 
 class Base(DeclarativeBase):
@@ -20,7 +24,6 @@ def _get_engine():
         echo=False,
     )
 
-    # Enable WAL mode for SQLite to allow concurrent reads
     if settings.database_url.startswith("sqlite"):
 
         @event.listens_for(engine, "connect")
@@ -45,17 +48,19 @@ def get_db():
         db.close()
 
 
-def init_db() -> None:
-    from app.models import (  # noqa: F401 — imports register models with Base
-        candle,
-        daily_risk_state,
-        order,
-        paper_account,
-        position,
-        signal,
-        strategy_config,
-        system_event,
-        trade,
-    )
+def run_migrations() -> None:
+    """Run Alembic migrations to head. Call this at application startup."""
+    from alembic import command
+    from alembic.config import Config
 
-    Base.metadata.create_all(bind=engine)
+    settings = get_settings()
+    cfg = Config("alembic.ini")
+    cfg.set_main_option("sqlalchemy.url", settings.database_url)
+    command.upgrade(cfg, "head")
+    logger.info("Database migrations applied.")
+
+
+def verify_db_connection() -> None:
+    """Quick connectivity check without modifying schema."""
+    with engine.connect() as conn:
+        conn.execute(text("SELECT 1"))
