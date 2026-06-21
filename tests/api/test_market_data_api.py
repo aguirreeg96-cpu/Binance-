@@ -1,28 +1,38 @@
 """Tests for market data API endpoints (no real HTTP calls)."""
 
 import inspect
-from datetime import datetime, timezone
 from decimal import Decimal
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import AsyncMock
+from unittest.mock import AsyncMock as _AsyncMock
+from unittest.mock import patch as _patch
 
 import pytest
 from fastapi.testclient import TestClient
 from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
 from sqlalchemy.pool import StaticPool
-from unittest.mock import AsyncMock as _AsyncMock, patch as _patch
 
 from app.database import Base, get_db
 from app.market_data.client import MarketDataClient
 from app.market_data.exceptions import BannedError, MarketDataError, RateLimitError
 from app.market_data.kline_parser import KlineData
-from app.models import candle, daily_risk_state, order, paper_account  # noqa: F401
-from app.models import position, signal, strategy_config, system_event, trade  # noqa: F401
+from app.models import (  # noqa: F401  # noqa: F401
+    candle,
+    daily_risk_state,
+    order,
+    paper_account,
+    position,
+    signal,
+    strategy_config,
+    system_event,
+    trade,
+)
 from app.repositories.candle_repository import CandleRepository
 
 # ---------------------------------------------------------------------------
 # App + fixtures
 # ---------------------------------------------------------------------------
+
 
 @pytest.fixture(scope="module")
 def test_engine():
@@ -65,9 +75,11 @@ def api_client(test_session, mock_market_client):
     application.dependency_overrides[get_db] = lambda: test_session
     application.dependency_overrides[get_market_data_client] = lambda: mock_market_client
 
-    with _patch("app.main.run_migrations"), \
-         _patch("app.main.verify_db_connection"), \
-         _patch("app.main.BinanceMarketDataClient") as MockClient:
+    with (
+        _patch("app.main.run_migrations"),
+        _patch("app.main.verify_db_connection"),
+        _patch("app.main.BinanceMarketDataClient") as MockClient,
+    ):
         MockClient.return_value.close = _AsyncMock()
         with TestClient(application, raise_server_exceptions=False) as client:
             yield client
@@ -75,11 +87,15 @@ def api_client(test_session, mock_market_client):
 
 def _seed_candle(session, open_time: int = 1_700_000_000_000) -> KlineData:
     kd = KlineData(
-        symbol="BTCUSDT", interval="1h",
+        symbol="BTCUSDT",
+        interval="1h",
         open_time=open_time,
-        open=Decimal("35000.00"), high=Decimal("35500.00"),
-        low=Decimal("34800.00"), close=Decimal("35200.00"),
-        volume=Decimal("100.5"), close_time=open_time + 3_600_000 - 1,
+        open=Decimal("35000.00"),
+        high=Decimal("35500.00"),
+        low=Decimal("34800.00"),
+        close=Decimal("35200.00"),
+        volume=Decimal("100.5"),
+        close_time=open_time + 3_600_000 - 1,
         quote_asset_volume=Decimal("3538100.00"),
         number_of_trades=1500,
         taker_buy_base_volume=Decimal("50.25"),
@@ -93,6 +109,7 @@ def _seed_candle(session, open_time: int = 1_700_000_000_000) -> KlineData:
 # ---------------------------------------------------------------------------
 # GET /api/v1/market-data/klines
 # ---------------------------------------------------------------------------
+
 
 class TestGetKlines:
     def test_returns_empty_list_when_no_data(self, api_client):
@@ -108,7 +125,8 @@ class TestGetKlines:
         resp = api_client.get(
             "/api/v1/market-data/klines",
             params={
-                "symbol": "BTCUSDT", "interval": "1h",
+                "symbol": "BTCUSDT",
+                "interval": "1h",
                 "include_open_candle": "true",
             },
         )
@@ -127,9 +145,16 @@ class TestGetKlines:
         data = resp.json()
         if data:
             candle_item = data[0]
-            for field in ("open", "high", "low", "close", "volume",
-                          "quote_asset_volume", "taker_buy_base_volume",
-                          "taker_buy_quote_volume"):
+            for field in (
+                "open",
+                "high",
+                "low",
+                "close",
+                "volume",
+                "quote_asset_volume",
+                "taker_buy_base_volume",
+                "taker_buy_quote_volume",
+            ):
                 assert isinstance(candle_item[field], str), (
                     f"Field {field!r} should be string in JSON response"
                 )
@@ -164,7 +189,8 @@ class TestGetKlines:
         resp = api_client.get(
             "/api/v1/market-data/klines",
             params={
-                "symbol": "BTCUSDT", "interval": "1h",
+                "symbol": "BTCUSDT",
+                "interval": "1h",
                 "start": "2025-01-01T00:00:00",  # no timezone
             },
         )
@@ -174,6 +200,7 @@ class TestGetKlines:
 # ---------------------------------------------------------------------------
 # POST /api/v1/market-data/download
 # ---------------------------------------------------------------------------
+
 
 class TestDownloadKlines:
     def _body(self, **overrides) -> dict:
@@ -198,22 +225,26 @@ class TestDownloadKlines:
         assert "warning" in data
 
     def test_start_after_end_returns_422(self, api_client):
-        resp = api_client.post("/api/v1/market-data/download", json=self._body(
-            start="2025-01-02T00:00:00Z",
-            end="2025-01-01T00:00:00Z",
-        ))
+        resp = api_client.post(
+            "/api/v1/market-data/download",
+            json=self._body(
+                start="2025-01-02T00:00:00Z",
+                end="2025-01-01T00:00:00Z",
+            ),
+        )
         assert resp.status_code == 422
 
     def test_invalid_interval_returns_422(self, api_client):
-        resp = api_client.post("/api/v1/market-data/download", json=self._body(
-            interval="99x"
-        ))
+        resp = api_client.post("/api/v1/market-data/download", json=self._body(interval="99x"))
         assert resp.status_code == 422
 
     def test_naive_datetime_rejected(self, api_client):
-        resp = api_client.post("/api/v1/market-data/download", json=self._body(
-            start="2025-01-01T00:00:00",  # no Z
-        ))
+        resp = api_client.post(
+            "/api/v1/market-data/download",
+            json=self._body(
+                start="2025-01-01T00:00:00",  # no Z
+            ),
+        )
         assert resp.status_code == 422
 
     def test_rate_limit_error_returns_429(self, api_client, mock_market_client):
@@ -246,6 +277,7 @@ class TestDownloadKlines:
 # Security / architecture checks
 # ---------------------------------------------------------------------------
 
+
 class TestArchitectureGuards:
     def test_market_data_client_has_no_order_methods(self):
         forbidden = {"order", "trade", "balance", "account", "withdraw", "cancel"}
@@ -261,11 +293,14 @@ class TestArchitectureGuards:
     def test_no_api_key_required_for_download(self, api_client, mock_market_client):
         """Download endpoint must work without any API key."""
         mock_market_client.get_klines.return_value = []
-        resp = api_client.post("/api/v1/market-data/download", json={
-            "symbol": "BTCUSDT",
-            "interval": "1h",
-            "start": "2025-01-01T00:00:00Z",
-            "end": "2025-01-01T02:00:00Z",
-        })
+        resp = api_client.post(
+            "/api/v1/market-data/download",
+            json={
+                "symbol": "BTCUSDT",
+                "interval": "1h",
+                "start": "2025-01-01T00:00:00Z",
+                "end": "2025-01-01T02:00:00Z",
+            },
+        )
         # Market data client was called without any credential
         assert resp.status_code == 200

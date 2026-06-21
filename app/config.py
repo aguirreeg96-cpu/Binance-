@@ -13,11 +13,13 @@ from app.schemas.common import TradingMode
 _ALLOWED_MARKET_DATA_HOSTS = frozenset({"data-api.binance.vision"})
 _ALLOWED_TRADING_HOSTS = frozenset({"demo-api.binance.com"})
 _ALLOWED_MARKET_WS_HOSTS = frozenset({"data-stream.binance.vision"})
-_REJECTED_ANYWHERE = frozenset({
-    "api.binance.com",
-    "ws-api.binance.com",
-    "stream.binance.com",
-})
+_REJECTED_ANYWHERE = frozenset(
+    {
+        "api.binance.com",
+        "ws-api.binance.com",
+        "stream.binance.com",
+    }
+)
 
 
 def _parse_and_guard(
@@ -29,14 +31,11 @@ def _parse_and_guard(
     parsed = urlparse(url)
 
     if parsed.username or parsed.password:
-        raise ValueError(
-            f"{field}: URL must not contain embedded credentials: {url!r}"
-        )
+        raise ValueError(f"{field}: URL must not contain embedded credentials: {url!r}")
 
     if parsed.scheme not in allowed_schemes:
         raise ValueError(
-            f"{field}: scheme must be one of {allowed_schemes}, "
-            f"got {parsed.scheme!r} in {url!r}"
+            f"{field}: scheme must be one of {allowed_schemes}, got {parsed.scheme!r} in {url!r}"
         )
 
     hostname = (parsed.hostname or "").lower()
@@ -120,7 +119,7 @@ class Settings(BaseSettings):
     market_data_timeout: float = 30.0
     market_data_max_retries: int = 3
     market_data_max_retry_after: int = 60  # seconds cap on Retry-After
-    market_data_max_requests: int = 500    # max pages per download job
+    market_data_max_requests: int = 500  # max pages per download job
     market_data_max_range_days: int = 365  # API validation guard
 
     # Application
@@ -138,8 +137,7 @@ class Settings(BaseSettings):
     def reject_live_mode(cls, v: str) -> str:
         if str(v).lower() == "live":
             raise ValueError(
-                "LIVE mode is not implemented. "
-                "Set TRADING_MODE to: signal, paper, or demo."
+                "LIVE mode is not implemented. Set TRADING_MODE to: signal, paper, or demo."
             )
         return v
 
@@ -153,16 +151,12 @@ class Settings(BaseSettings):
     @field_validator("binance_trading_url", mode="before")
     @classmethod
     def validate_trading_url(cls, v: str) -> str:
-        return _parse_and_guard(
-            v, "BINANCE_TRADING_URL", _ALLOWED_TRADING_HOSTS, ("https",)
-        )
+        return _parse_and_guard(v, "BINANCE_TRADING_URL", _ALLOWED_TRADING_HOSTS, ("https",))
 
     @field_validator("binance_market_ws_url", mode="before")
     @classmethod
     def validate_market_ws_url(cls, v: str) -> str:
-        return _parse_and_guard(
-            v, "BINANCE_MARKET_WS_URL", _ALLOWED_MARKET_WS_HOSTS, ("wss",)
-        )
+        return _parse_and_guard(v, "BINANCE_MARKET_WS_URL", _ALLOWED_MARKET_WS_HOSTS, ("wss",))
 
     @model_validator(mode="after")
     def validate_demo_requires_credentials(self) -> "Settings":

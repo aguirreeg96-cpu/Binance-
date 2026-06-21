@@ -50,7 +50,8 @@ class InvalidSymbolError(MarketDataError):
 
     def __init__(self, symbol: str, reason: str = "") -> None:
         self.symbol = symbol
-        super().__init__(f"Invalid symbol {symbol!r}: {reason}" if reason else f"Invalid symbol {symbol!r}")
+        msg = f"Invalid symbol {symbol!r}: {reason}" if reason else f"Invalid symbol {symbol!r}"
+        super().__init__(msg)
 
 
 class InvalidIntervalError(MarketDataError):

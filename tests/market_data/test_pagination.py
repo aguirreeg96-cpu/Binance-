@@ -1,8 +1,7 @@
 """Tests for download pagination logic (mocked client, mocked DB)."""
 
-from datetime import datetime, timezone
-from decimal import Decimal
-from unittest.mock import AsyncMock, MagicMock, patch
+from datetime import UTC, datetime
+from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
@@ -13,15 +12,14 @@ from app.market_data.exceptions import (
     PaginationStallError,
 )
 from app.market_data.historical_service import HistoricalDataService, _validate_raw_batch
-from app.market_data.kline_parser import KlineData
 
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
 
 _INTERVAL_MS = 900_000  # 15m in ms
-_START = datetime(2025, 1, 1, tzinfo=timezone.utc)
-_END = datetime(2025, 1, 2, tzinfo=timezone.utc)
+_START = datetime(2025, 1, 1, tzinfo=UTC)
+_END = datetime(2025, 1, 2, tzinfo=UTC)
 _START_MS = int(_START.timestamp() * 1000)
 _END_MS = int(_END.timestamp() * 1000)
 
@@ -30,9 +28,18 @@ def _make_raw(open_time: int) -> list:
     """Create a minimal valid raw kline with open_time."""
     close_time = open_time + _INTERVAL_MS - 1
     return [
-        open_time, "35000.00", "35500.00", "34800.00", "35200.00",
-        "100.00", close_time, "3500000.00", 1000,
-        "50.00", "1750000.00", "0",
+        open_time,
+        "35000.00",
+        "35500.00",
+        "34800.00",
+        "35200.00",
+        "100.00",
+        close_time,
+        "3500000.00",
+        1000,
+        "50.00",
+        "1750000.00",
+        "0",
     ]
 
 
@@ -63,6 +70,7 @@ def _mock_session() -> MagicMock:
 # Tests
 # ---------------------------------------------------------------------------
 
+
 class TestEmptyAndSinglePage:
     @pytest.mark.asyncio
     async def test_empty_first_page_returns_zero(self):
@@ -71,8 +79,11 @@ class TestEmptyAndSinglePage:
         session = _mock_session()
 
         result = await service.download(
-            session=session, symbol="BTCUSDT", interval="15m",
-            start=_START, end=_END,
+            session=session,
+            symbol="BTCUSDT",
+            interval="15m",
+            start=_START,
+            end=_END,
         )
         assert result.received == 0
         assert result.requests_made == 1
@@ -85,8 +96,11 @@ class TestEmptyAndSinglePage:
         session = _mock_session()
 
         result = await service.download(
-            session=session, symbol="BTCUSDT", interval="15m",
-            start=_START, end=_END,
+            session=session,
+            symbol="BTCUSDT",
+            interval="15m",
+            start=_START,
+            end=_END,
         )
         assert result.received == 96
         assert result.requests_made == 1  # stopped after < 1000
@@ -103,12 +117,13 @@ class TestMultiPagePagination:
         session = _mock_session()
 
         # End must be after page2's last candle
-        end = datetime.fromtimestamp(
-            (page2_start + 600 * _INTERVAL_MS) / 1000, tz=timezone.utc
-        )
+        end = datetime.fromtimestamp((page2_start + 600 * _INTERVAL_MS) / 1000, tz=UTC)
         result = await service.download(
-            session=session, symbol="BTCUSDT", interval="15m",
-            start=_START, end=end,
+            session=session,
+            symbol="BTCUSDT",
+            interval="15m",
+            start=_START,
+            end=end,
         )
         assert result.requests_made == 2
 
@@ -129,12 +144,15 @@ class TestMultiPagePagination:
         client.get_klines = AsyncMock(side_effect=endless_pages)
 
         service = HistoricalDataService(client=client, max_requests=3)
-        far_end = datetime(2030, 1, 1, tzinfo=timezone.utc)
+        far_end = datetime(2030, 1, 1, tzinfo=UTC)
 
         with pytest.raises(MaxRequestsError):
             await service.download(
-                session=_mock_session(), symbol="BTCUSDT", interval="15m",
-                start=_START, end=far_end,
+                session=_mock_session(),
+                symbol="BTCUSDT",
+                interval="15m",
+                start=_START,
+                end=far_end,
             )
 
 
@@ -150,8 +168,11 @@ class TestStallDetection:
 
         with pytest.raises(PaginationStallError, match="stalled"):
             await service.download(
-                session=_mock_session(), symbol="BTCUSDT", interval="15m",
-                start=_START, end=datetime(2030, 1, 1, tzinfo=timezone.utc),
+                session=_mock_session(),
+                symbol="BTCUSDT",
+                interval="15m",
+                start=_START,
+                end=datetime(2030, 1, 1, tzinfo=UTC),
             )
 
     @pytest.mark.asyncio
@@ -163,8 +184,11 @@ class TestStallDetection:
 
         with pytest.raises(PaginationStallError):
             await service.download(
-                session=_mock_session(), symbol="BTCUSDT", interval="15m",
-                start=_START, end=datetime(2030, 1, 1, tzinfo=timezone.utc),
+                session=_mock_session(),
+                symbol="BTCUSDT",
+                interval="15m",
+                start=_START,
+                end=datetime(2030, 1, 1, tzinfo=UTC),
             )
 
 
@@ -197,8 +221,11 @@ class TestInputValidation:
         service = HistoricalDataService(client=client, max_requests=10)
         with pytest.raises(ValueError, match="before end"):
             await service.download(
-                session=_mock_session(), symbol="BTCUSDT", interval="15m",
-                start=_START, end=_START,
+                session=_mock_session(),
+                symbol="BTCUSDT",
+                interval="15m",
+                start=_START,
+                end=_START,
             )
 
     @pytest.mark.asyncio
@@ -207,8 +234,11 @@ class TestInputValidation:
         service = HistoricalDataService(client=client, max_requests=10)
         with pytest.raises(ValueError, match="before end"):
             await service.download(
-                session=_mock_session(), symbol="BTCUSDT", interval="15m",
-                start=_END, end=_START,
+                session=_mock_session(),
+                symbol="BTCUSDT",
+                interval="15m",
+                start=_END,
+                end=_START,
             )
 
     @pytest.mark.asyncio
@@ -218,8 +248,11 @@ class TestInputValidation:
         naive = datetime(2025, 1, 1)  # no tzinfo
         with pytest.raises(ValueError, match="timezone-aware"):
             await service.download(
-                session=_mock_session(), symbol="BTCUSDT", interval="15m",
-                start=naive, end=_END,
+                session=_mock_session(),
+                symbol="BTCUSDT",
+                interval="15m",
+                start=naive,
+                end=_END,
             )
 
     @pytest.mark.asyncio
@@ -229,8 +262,11 @@ class TestInputValidation:
         naive = datetime(2025, 1, 2)
         with pytest.raises(ValueError, match="timezone-aware"):
             await service.download(
-                session=_mock_session(), symbol="BTCUSDT", interval="15m",
-                start=_START, end=naive,
+                session=_mock_session(),
+                symbol="BTCUSDT",
+                interval="15m",
+                start=_START,
+                end=naive,
             )
 
     @pytest.mark.asyncio
@@ -239,8 +275,11 @@ class TestInputValidation:
         service = HistoricalDataService(client=client, max_requests=10)
         with pytest.raises(InvalidIntervalError):
             await service.download(
-                session=_mock_session(), symbol="BTCUSDT", interval="99x",
-                start=_START, end=_END,
+                session=_mock_session(),
+                symbol="BTCUSDT",
+                interval="99x",
+                start=_START,
+                end=_END,
             )
 
     @pytest.mark.asyncio
@@ -253,8 +292,11 @@ class TestInputValidation:
         service = HistoricalDataService(client=client, max_requests=10)
         with pytest.raises(InvalidSymbolError):
             await service.download(
-                session=_mock_session(), symbol="BTCUSDT", interval="15m",
-                start=_START, end=_END,
+                session=_mock_session(),
+                symbol="BTCUSDT",
+                interval="15m",
+                start=_START,
+                end=_END,
             )
 
     @pytest.mark.asyncio
@@ -265,7 +307,11 @@ class TestInputValidation:
         service = HistoricalDataService(client=client, max_requests=10)
 
         await service.download(
-            session=_mock_session(), symbol="BTCUSDT", interval="15m",
-            start=_START, end=_END, include_open_candle=True,
+            session=_mock_session(),
+            symbol="BTCUSDT",
+            interval="15m",
+            start=_START,
+            end=_END,
+            include_open_candle=True,
         )
         client.get_server_time.assert_not_called()

@@ -1,4 +1,5 @@
 import logging
+from collections.abc import AsyncGenerator
 from contextlib import asynccontextmanager
 
 from fastapi import FastAPI
@@ -21,7 +22,7 @@ BANNER = """
 
 
 @asynccontextmanager
-async def lifespan(app: FastAPI):
+async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
     settings = get_settings()
 
     logging.basicConfig(
@@ -65,10 +66,7 @@ def create_app() -> FastAPI:
 
     app = FastAPI(
         title="Binance Semi-Auto Trader",
-        description=(
-            "⚠ PAPER/TEST environment only. "
-            "No real money. Educational purposes."
-        ),
+        description=("⚠ PAPER/TEST environment only. No real money. Educational purposes."),
         version="0.2.0",
         docs_url="/docs",
         redoc_url="/redoc",
@@ -77,10 +75,11 @@ def create_app() -> FastAPI:
 
     # Routers
     from app.api.market_data import router as market_data_router
+
     app.include_router(market_data_router)
 
     @app.get("/health", tags=["system"])
-    async def health():
+    async def health() -> dict[str, str]:
         return {
             "status": "ok",
             "mode": settings.trading_mode.value,
@@ -90,7 +89,7 @@ def create_app() -> FastAPI:
         }
 
     @app.get("/config", tags=["system"])
-    async def config_summary():
+    async def config_summary() -> dict[str, str | int]:
         return {
             "trading_mode": settings.trading_mode.value,
             "symbol": settings.trading_symbol,

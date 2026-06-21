@@ -10,9 +10,8 @@ Upsert strategy (avoids rowcount ambiguity):
 """
 
 import logging
+from collections.abc import Sequence
 from dataclasses import dataclass
-from decimal import Decimal
-from typing import Sequence
 
 from sqlalchemy import select
 from sqlalchemy.orm import Session
@@ -23,9 +22,16 @@ from app.models.candle import Candle
 logger = logging.getLogger(__name__)
 
 _COMPARE_FIELDS = (
-    "open", "high", "low", "close", "volume",
-    "close_time", "quote_asset_volume",
-    "trades", "taker_buy_base_volume", "taker_buy_quote_volume",
+    "open",
+    "high",
+    "low",
+    "close",
+    "volume",
+    "close_time",
+    "quote_asset_volume",
+    "trades",
+    "taker_buy_base_volume",
+    "taker_buy_quote_volume",
 )
 
 
@@ -87,7 +93,11 @@ class CandleRepository:
 
         logger.debug(
             "upsert_batch %s %s: inserted=%d updated=%d ignored=%d",
-            symbol, interval, inserted, updated, ignored,
+            symbol,
+            interval,
+            inserted,
+            updated,
+            ignored,
         )
         return UpsertResult(inserted=inserted, updated=updated, ignored=ignored)
 
@@ -129,6 +139,7 @@ class CandleRepository:
 # ---------------------------------------------------------------------------
 # Private helpers
 # ---------------------------------------------------------------------------
+
 
 def _candle_from_kline(kd: KlineData) -> Candle:
     return Candle(

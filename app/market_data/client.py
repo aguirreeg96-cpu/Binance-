@@ -10,7 +10,8 @@ import logging
 import random
 import time
 from abc import ABC, abstractmethod
-from typing import Any, Callable
+from collections.abc import Callable
+from typing import Any
 
 import httpx
 
@@ -26,10 +27,21 @@ logger = logging.getLogger(__name__)
 
 # Forbidden path fragments — belt-and-suspenders guard so this client can
 # never accidentally call trading endpoints even via misconfiguration.
-_FORBIDDEN_PATH_FRAGMENTS = frozenset({
-    "order", "trade", "balance", "account", "withdraw", "cancel",
-    "deposit", "asset", "margin", "futures", "leveraged",
-})
+_FORBIDDEN_PATH_FRAGMENTS = frozenset(
+    {
+        "order",
+        "trade",
+        "balance",
+        "account",
+        "withdraw",
+        "cancel",
+        "deposit",
+        "asset",
+        "margin",
+        "futures",
+        "leveraged",
+    }
+)
 
 
 class MarketDataClient(ABC):
@@ -162,7 +174,9 @@ class BinanceMarketDataClient(MarketDataClient):
 
                     logger.warning(
                         "Rate limited (HTTP 429), waiting %ds (attempt %d/%d)",
-                        retry_after, attempt + 1, self._max_retries + 1,
+                        retry_after,
+                        attempt + 1,
+                        self._max_retries + 1,
                     )
                     if attempt < self._max_retries:
                         await self._sleep(float(retry_after))
@@ -171,19 +185,19 @@ class BinanceMarketDataClient(MarketDataClient):
 
                 if response.status_code == 418:
                     raw_after = response.headers.get("Retry-After")
-                    retry_after = int(raw_after) if raw_after else None
+                    banned_after: int | None = int(raw_after) if raw_after else None
                     logger.error("IP banned by Binance (HTTP 418)")
-                    raise BannedError(retry_after)
+                    raise BannedError(banned_after)
 
                 if 500 <= response.status_code < 600:
-                    last_exc = MarketDataError(
-                        f"Binance server error HTTP {response.status_code}"
-                    )
+                    last_exc = MarketDataError(f"Binance server error HTTP {response.status_code}")
                     if attempt < self._max_retries:
-                        wait = (2.0 ** attempt) + self._jitter()
+                        wait = (2.0**attempt) + self._jitter()
                         logger.warning(
                             "Binance 5xx (attempt %d/%d), retrying in %.2fs",
-                            attempt + 1, self._max_retries + 1, wait,
+                            attempt + 1,
+                            self._max_retries + 1,
+                            wait,
                         )
                         await self._sleep(wait)
                         continue
@@ -202,10 +216,13 @@ class BinanceMarketDataClient(MarketDataClient):
             except (httpx.NetworkError, httpx.TimeoutException) as exc:
                 last_exc = exc
                 if attempt < self._max_retries:
-                    wait = (2.0 ** attempt) + self._jitter()
+                    wait = (2.0**attempt) + self._jitter()
                     logger.warning(
                         "Network error (attempt %d/%d), retrying in %.2fs: %s",
-                        attempt + 1, self._max_retries + 1, wait, exc,
+                        attempt + 1,
+                        self._max_retries + 1,
+                        wait,
+                        exc,
                     )
                     await self._sleep(wait)
                     continue
@@ -231,9 +248,7 @@ class BinanceMarketDataClient(MarketDataClient):
                 return data
 
         logger.debug("Fetching exchange_info for %s", symbol)
-        data = await self._request(
-            "GET", "/api/v3/exchangeInfo", params={"symbol": symbol}
-        )
+        data = await self._request("GET", "/api/v3/exchangeInfo", params={"symbol": symbol})
         self._exchange_info_cache[symbol] = (self._now(), data)
         return data
 

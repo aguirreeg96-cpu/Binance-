@@ -1,8 +1,9 @@
 import logging
 from logging.config import fileConfig
 
-from alembic import context
 from sqlalchemy import engine_from_config, pool
+
+from alembic import context
 
 # ---------------------------------------------------------------------------
 # Alembic Config object — provides access to alembic.ini
@@ -39,12 +40,14 @@ def _get_url() -> str:
     if url:
         return url
     from app.config import get_settings
+
     return get_settings().database_url
 
 
 # ---------------------------------------------------------------------------
 # Migration runners
 # ---------------------------------------------------------------------------
+
 
 def run_migrations_offline() -> None:
     url = _get_url()

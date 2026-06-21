@@ -10,8 +10,8 @@ Semantics:
 import logging
 import re
 import time
-from dataclasses import dataclass, field
-from datetime import datetime, timezone
+from dataclasses import dataclass
+from datetime import UTC, datetime
 from typing import TYPE_CHECKING
 
 from sqlalchemy.orm import Session
@@ -27,7 +27,7 @@ from app.market_data.interval_utils import interval_to_ms, validate_interval
 from app.market_data.kline_parser import KlineData
 
 if TYPE_CHECKING:
-    from app.repositories.candle_repository import CandleRepository
+    pass
 
 logger = logging.getLogger(__name__)
 
@@ -51,7 +51,7 @@ class DownloadResult:
 
 
 def _ms_to_dt(ms: int) -> datetime:
-    return datetime.fromtimestamp(ms / 1000.0, tz=timezone.utc)
+    return datetime.fromtimestamp(ms / 1000.0, tz=UTC)
 
 
 def _dt_to_ms(dt: datetime) -> int:
@@ -64,7 +64,7 @@ def _require_utc(dt: datetime, name: str) -> datetime:
             f"{name} must be a timezone-aware datetime. "
             "Naive datetimes are rejected to prevent UTC/local ambiguity."
         )
-    return dt.astimezone(timezone.utc)
+    return dt.astimezone(UTC)
 
 
 class HistoricalDataService:
@@ -130,7 +130,8 @@ class HistoricalDataService:
 
             logger.debug(
                 "Fetching %s %s from %s (page %d)",
-                symbol, interval,
+                symbol,
+                interval,
                 _ms_to_dt(current_start_ms).isoformat(),
                 result.requests_made + 1,
             )
@@ -204,8 +205,14 @@ class HistoricalDataService:
         logger.info(
             "Download complete: %s %s — %d requests, %d candles "
             "(inserted=%d updated=%d ignored=%d) in %dms",
-            symbol, interval, result.requests_made, result.received,
-            result.inserted, result.updated, result.ignored, result.duration_ms,
+            symbol,
+            interval,
+            result.requests_made,
+            result.received,
+            result.inserted,
+            result.updated,
+            result.ignored,
+            result.duration_ms,
         )
         return result
 
@@ -241,14 +248,12 @@ def _validate_raw_batch(batch: list[list], expected_start_ms: int) -> None:
         open_time = int(raw[0])
 
         if open_time in seen:
-            raise PaginationStallError(
-                f"Duplicate open_time {open_time} at index {i} in batch"
-            )
+            raise PaginationStallError(f"Duplicate open_time {open_time} at index {i} in batch")
         seen.add(open_time)
 
         if prev is not None and open_time <= prev:
             raise PaginationStallError(
                 f"Batch not in ascending order: index {i} open_time {open_time} "
-                f"<= index {i-1} open_time {prev}"
+                f"<= index {i - 1} open_time {prev}"
             )
         prev = open_time

@@ -1,6 +1,8 @@
 import logging
+from collections.abc import Generator
+from typing import Any
 
-from sqlalchemy import create_engine, event, text
+from sqlalchemy import Engine, create_engine, event, text
 from sqlalchemy.orm import DeclarativeBase, Session, sessionmaker
 
 from app.config import get_settings
@@ -12,9 +14,9 @@ class Base(DeclarativeBase):
     pass
 
 
-def _get_engine():
+def _get_engine() -> Engine:
     settings = get_settings()
-    connect_args = {}
+    connect_args: dict[str, Any] = {}
     if settings.database_url.startswith("sqlite"):
         connect_args["check_same_thread"] = False
 
@@ -27,7 +29,7 @@ def _get_engine():
     if settings.database_url.startswith("sqlite"):
 
         @event.listens_for(engine, "connect")
-        def set_sqlite_pragma(dbapi_connection, connection_record):
+        def set_sqlite_pragma(dbapi_connection: Any, connection_record: Any) -> None:
             cursor = dbapi_connection.cursor()
             cursor.execute("PRAGMA journal_mode=WAL")
             cursor.execute("PRAGMA foreign_keys=ON")
@@ -40,7 +42,7 @@ engine = _get_engine()
 SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
 
 
-def get_db():
+def get_db() -> Generator[Session, None, None]:
     db: Session = SessionLocal()
     try:
         yield db
@@ -50,7 +52,7 @@ def get_db():
 
 def run_migrations() -> None:
     """Run Alembic migrations to head. Call this at application startup."""
-    from alembic import command
+    import alembic.command as command
     from alembic.config import Config
 
     settings = get_settings()

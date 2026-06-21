@@ -1,31 +1,31 @@
-from enum import Enum
+from enum import StrEnum
 
 
-class TradingMode(str, Enum):
+class TradingMode(StrEnum):
     SIGNAL = "signal"
     PAPER = "paper"
     DEMO = "demo"
 
 
-class SignalType(str, Enum):
+class SignalType(StrEnum):
     BUY = "BUY"
     SELL = "SELL"
     WAIT = "WAIT"
 
 
-class OrderSide(str, Enum):
+class OrderSide(StrEnum):
     BUY = "BUY"
     SELL = "SELL"
 
 
-class OrderType(str, Enum):
+class OrderType(StrEnum):
     MARKET = "MARKET"
     LIMIT = "LIMIT"
     STOP_LOSS_LIMIT = "STOP_LOSS_LIMIT"
     TAKE_PROFIT_LIMIT = "TAKE_PROFIT_LIMIT"
 
 
-class OrderStatus(str, Enum):
+class OrderStatus(StrEnum):
     PENDING_APPROVAL = "PENDING_APPROVAL"
     REJECTED = "REJECTED"
     EXPIRED = "EXPIRED"
@@ -36,12 +36,12 @@ class OrderStatus(str, Enum):
     FAILED = "FAILED"
 
 
-class PositionStatus(str, Enum):
+class PositionStatus(StrEnum):
     OPEN = "OPEN"
     CLOSED = "CLOSED"
 
 
-class EventLevel(str, Enum):
+class EventLevel(StrEnum):
     DEBUG = "DEBUG"
     INFO = "INFO"
     WARNING = "WARNING"
@@ -49,7 +49,7 @@ class EventLevel(str, Enum):
     CRITICAL = "CRITICAL"
 
 
-class Interval(str, Enum):
+class Interval(StrEnum):
     M1 = "1m"
     M3 = "3m"
     M5 = "5m"

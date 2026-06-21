@@ -14,13 +14,13 @@ class KlineData:
 
     symbol: str
     interval: str
-    open_time: int          # milliseconds UTC (inclusive open)
+    open_time: int  # milliseconds UTC (inclusive open)
     open: Decimal
     high: Decimal
     low: Decimal
     close: Decimal
-    volume: Decimal         # base asset volume
-    close_time: int         # milliseconds UTC (inclusive close)
+    volume: Decimal  # base asset volume
+    close_time: int  # milliseconds UTC (inclusive close)
     quote_asset_volume: Decimal
     number_of_trades: int
     taker_buy_base_volume: Decimal
@@ -106,14 +106,11 @@ class KlineData:
         if self.low > self.close:
             errors.append(f"low ({self.low}) > close ({self.close})")
         if self.open_time >= self.close_time:
-            errors.append(
-                f"open_time ({self.open_time}) >= close_time ({self.close_time})"
-            )
+            errors.append(f"open_time ({self.open_time}) >= close_time ({self.close_time})")
 
         if errors:
             raise KlineValidationError(
-                f"Kline {self.symbol} @{self.open_time} failed validation: "
-                + "; ".join(errors)
+                f"Kline {self.symbol} @{self.open_time} failed validation: " + "; ".join(errors)
             )
 
 

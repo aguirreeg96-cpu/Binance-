@@ -14,7 +14,7 @@ import asyncio
 import json
 import logging
 import sys
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 
 logging.basicConfig(
     level=logging.INFO,
@@ -32,10 +32,8 @@ def _parse_dt(s: str) -> datetime:
             f"Invalid datetime {s!r}. Use ISO 8601 with timezone, e.g. 2025-01-01T00:00:00Z"
         ) from exc
     if dt.tzinfo is None:
-        raise argparse.ArgumentTypeError(
-            f"Datetime {s!r} has no timezone. Append 'Z' for UTC."
-        )
-    return dt.astimezone(timezone.utc)
+        raise argparse.ArgumentTypeError(f"Datetime {s!r} has no timezone. Append 'Z' for UTC.")
+    return dt.astimezone(UTC)
 
 
 async def _run(args: argparse.Namespace) -> int:
@@ -99,15 +97,19 @@ def main() -> None:
         description="Download historical klines from Binance public API.",
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog="Example:\n  python -m app.cli.download_klines "
-               "--symbol BTCUSDT --interval 15m "
-               "--start 2025-01-01T00:00:00Z --end 2025-02-01T00:00:00Z",
+        "--symbol BTCUSDT --interval 15m "
+        "--start 2025-01-01T00:00:00Z --end 2025-02-01T00:00:00Z",
     )
     parser.add_argument("--symbol", required=True, help="Trading pair, e.g. BTCUSDT")
     parser.add_argument("--interval", required=True, help="Kline interval, e.g. 15m")
-    parser.add_argument("--start", required=True, type=_parse_dt, help="Start datetime (UTC ISO 8601)")
+    parser.add_argument(
+        "--start", required=True, type=_parse_dt, help="Start datetime (UTC ISO 8601)"
+    )
     parser.add_argument("--end", required=True, type=_parse_dt, help="End datetime (UTC ISO 8601)")
     parser.add_argument(
-        "--include-open-candle", action="store_true", default=False,
+        "--include-open-candle",
+        action="store_true",
+        default=False,
         help="Include the current (unclosed) candle",
     )
     args = parser.parse_args()

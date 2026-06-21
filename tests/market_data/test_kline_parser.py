@@ -4,18 +4,24 @@ from decimal import Decimal
 
 import pytest
 
-from app.market_data.kline_parser import KlineData, _to_decimal
 from app.market_data.exceptions import KlineParseError, KlineValidationError
+from app.market_data.kline_parser import KlineData, _to_decimal
 
 
 def _raw(
     open_time=1700000000000,
-    o="35000.00", h="35500.00", l="34800.00", c="35200.00",
-    vol="100.5", close_time=1700003600000 - 1,
-    quote_vol="3538100.00", trades=1500,
-    tb_base="50.25", tb_quote="1769050.00",
+    o="35000.00",
+    h="35500.00",
+    low="34800.00",
+    c="35200.00",
+    vol="100.5",
+    close_time=1700003600000 - 1,
+    quote_vol="3538100.00",
+    trades=1500,
+    tb_base="50.25",
+    tb_quote="1769050.00",
 ) -> list:
-    return [open_time, o, h, l, c, vol, close_time, quote_vol, trades, tb_base, tb_quote, "0"]
+    return [open_time, o, h, low, c, vol, close_time, quote_vol, trades, tb_base, tb_quote, "0"]
 
 
 class TestKlineParser:
@@ -32,16 +38,21 @@ class TestKlineParser:
 
     def test_all_price_fields_are_decimal(self):
         kd = KlineData.from_raw(_raw(), "BTCUSDT", "1h")
-        for field_name in ("open", "high", "low", "close", "volume",
-                           "quote_asset_volume", "taker_buy_base_volume",
-                           "taker_buy_quote_volume"):
-            assert isinstance(getattr(kd, field_name), Decimal), (
-                f"{field_name} should be Decimal"
-            )
+        for field_name in (
+            "open",
+            "high",
+            "low",
+            "close",
+            "volume",
+            "quote_asset_volume",
+            "taker_buy_base_volume",
+            "taker_buy_quote_volume",
+        ):
+            assert isinstance(getattr(kd, field_name), Decimal), f"{field_name} should be Decimal"
 
     def test_no_float_contamination(self):
         # Values that are lossy as float must survive as exact Decimal
-        raw = _raw(o="0.00000001", h="0.00000002", l="0.00000001", c="0.00000001")
+        raw = _raw(o="0.00000001", h="0.00000002", low="0.00000001", c="0.00000001")
         kd = KlineData.from_raw(raw, "SHIBUSDT", "1m")
         assert kd.open == Decimal("0.00000001")
         assert kd.high == Decimal("0.00000002")
@@ -78,31 +89,31 @@ class TestKlineValidation:
         KlineData.from_raw(_raw(), "BTCUSDT", "1h").validate()  # no exception
 
     def test_high_less_than_open_rejected(self):
-        raw = _raw(o="35500.00", h="35000.00", l="34800.00", c="35200.00")
+        raw = _raw(o="35500.00", h="35000.00", low="34800.00", c="35200.00")
         kd = KlineData.from_raw(raw, "BTCUSDT", "1h")
         with pytest.raises(KlineValidationError, match="high.*<.*open"):
             kd.validate()
 
     def test_high_less_than_close_rejected(self):
-        raw = _raw(o="35000.00", h="35100.00", l="34800.00", c="35200.00")
+        raw = _raw(o="35000.00", h="35100.00", low="34800.00", c="35200.00")
         kd = KlineData.from_raw(raw, "BTCUSDT", "1h")
         with pytest.raises(KlineValidationError, match="high.*<.*close"):
             kd.validate()
 
     def test_high_less_than_low_rejected(self):
-        raw = _raw(o="35000.00", h="34000.00", l="34800.00", c="35000.00")
+        raw = _raw(o="35000.00", h="34000.00", low="34800.00", c="35000.00")
         kd = KlineData.from_raw(raw, "BTCUSDT", "1h")
         with pytest.raises(KlineValidationError, match="high.*<.*low"):
             kd.validate()
 
     def test_low_greater_than_open_rejected(self):
-        raw = _raw(o="34000.00", h="35500.00", l="34800.00", c="35000.00")
+        raw = _raw(o="34000.00", h="35500.00", low="34800.00", c="35000.00")
         kd = KlineData.from_raw(raw, "BTCUSDT", "1h")
         with pytest.raises(KlineValidationError, match="low.*>.*open"):
             kd.validate()
 
     def test_low_greater_than_close_rejected(self):
-        raw = _raw(o="35000.00", h="35500.00", l="35100.00", c="34900.00")
+        raw = _raw(o="35000.00", h="35500.00", low="35100.00", c="34900.00")
         kd = KlineData.from_raw(raw, "BTCUSDT", "1h")
         with pytest.raises(KlineValidationError, match="low.*>.*close"):
             kd.validate()

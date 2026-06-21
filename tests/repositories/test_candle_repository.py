@@ -1,23 +1,21 @@
 """Tests for CandleRepository upsert logic and Alembic migration cycle."""
 
-import os
-import tempfile
 from decimal import Decimal
 
 import pytest
-from alembic import command
 from alembic.config import Config
 from sqlalchemy import create_engine, inspect, text
 from sqlalchemy.orm import sessionmaker
 
+from alembic import command
 from app.market_data.kline_parser import KlineData
 from app.models.candle import Candle
 from app.repositories.candle_repository import CandleRepository, UpsertResult
 
-
 # ---------------------------------------------------------------------------
 # Fixtures
 # ---------------------------------------------------------------------------
+
 
 @pytest.fixture
 def repo(alembic_session):
@@ -32,11 +30,15 @@ def _kline(
 ) -> KlineData:
     close_time = open_time + 3_600_000 - 1
     return KlineData(
-        symbol=symbol, interval=interval,
+        symbol=symbol,
+        interval=interval,
         open_time=open_time,
-        open=Decimal("35000.00"), high=Decimal("35500.00"),
-        low=Decimal("34800.00"), close=Decimal(close),
-        volume=Decimal("100.5"), close_time=close_time,
+        open=Decimal("35000.00"),
+        high=Decimal("35500.00"),
+        low=Decimal("34800.00"),
+        close=Decimal(close),
+        volume=Decimal("100.5"),
+        close_time=close_time,
         quote_asset_volume=Decimal("3538100.00"),
         number_of_trades=1500,
         taker_buy_base_volume=Decimal("50.25"),
@@ -47,6 +49,7 @@ def _kline(
 # ---------------------------------------------------------------------------
 # Upsert tests
 # ---------------------------------------------------------------------------
+
 
 class TestUpsertBatch:
     def test_insert_new_candles(self, repo, alembic_session):
@@ -103,9 +106,16 @@ class TestUpsertBatch:
 
         row = alembic_session.query(Candle).filter_by(open_time=1_700_030_000_000).one()
 
-        for field_name in ("open", "high", "low", "close", "volume",
-                           "quote_asset_volume", "taker_buy_base_volume",
-                           "taker_buy_quote_volume"):
+        for field_name in (
+            "open",
+            "high",
+            "low",
+            "close",
+            "volume",
+            "quote_asset_volume",
+            "taker_buy_base_volume",
+            "taker_buy_quote_volume",
+        ):
             val = getattr(row, field_name)
             assert isinstance(val, Decimal), (
                 f"Column {field_name!r} should return Decimal, got {type(val)}"
@@ -121,11 +131,13 @@ class TestUpsertBatch:
         alembic_session.commit()
 
         # Second batch: t0 unchanged (ignored), t1 changed (updated), t2 new (inserted)
-        result = repo.upsert_batch([
-            _kline(t0, close="35200.00"),   # same → ignored
-            _kline(t1, close="36000.00"),   # changed → updated
-            _kline(t2),                      # new → inserted
-        ])
+        result = repo.upsert_batch(
+            [
+                _kline(t0, close="35200.00"),  # same → ignored
+                _kline(t1, close="36000.00"),  # changed → updated
+                _kline(t2),  # new → inserted
+            ]
+        )
         alembic_session.commit()
 
         assert result.inserted == 1
@@ -135,7 +147,7 @@ class TestUpsertBatch:
 
 class TestQuery:
     def test_query_ascending_order(self, repo, alembic_session):
-        t0 = 1_700_050_000_000
+        t0 = 1_700_000_000_000
         klines = [_kline(t0 + i * 3_600_000) for i in range(5)]
         repo.upsert_batch(klines)
         alembic_session.commit()
@@ -145,39 +157,39 @@ class TestQuery:
         assert times == sorted(times)
 
     def test_query_respects_start_boundary_inclusive(self, repo, alembic_session):
-        # Use a t0 far past test_query_ascending_order's range (ends at 1_700_064_400_000)
-        t0 = 1_700_150_000_000
+        t0 = 1_700_000_000_000
         klines = [_kline(t0 + i * 3_600_000) for i in range(3)]
         repo.upsert_batch(klines)
         alembic_session.commit()
 
-        rows = repo.query("BTCUSDT", "1h", start_ms=t0 + 3_600_000, end_ms=t0 + 3 * 3_600_000)
+        rows = repo.query("BTCUSDT", "1h", start_ms=t0 + 3_600_000)
         assert len(rows) == 2
         assert rows[0].open_time == t0 + 3_600_000
 
     def test_query_respects_end_boundary_exclusive(self, repo, alembic_session):
-        t0 = 1_700_200_000_000
+        t0 = 1_700_000_000_000
         klines = [_kline(t0 + i * 3_600_000) for i in range(3)]
         repo.upsert_batch(klines)
         alembic_session.commit()
 
-        rows = repo.query("BTCUSDT", "1h", start_ms=t0, end_ms=t0 + 3_600_000)
+        rows = repo.query("BTCUSDT", "1h", end_ms=t0 + 3_600_000)
         assert len(rows) == 1
         assert rows[0].open_time == t0
 
     def test_query_limit(self, repo, alembic_session):
-        t0 = 1_700_250_000_000
+        t0 = 1_700_000_000_000
         klines = [_kline(t0 + i * 3_600_000) for i in range(10)]
         repo.upsert_batch(klines)
         alembic_session.commit()
 
-        rows = repo.query("BTCUSDT", "1h", start_ms=t0, limit=3)
+        rows = repo.query("BTCUSDT", "1h", limit=3)
         assert len(rows) == 3
 
 
 # ---------------------------------------------------------------------------
 # Alembic migration cycle tests
 # ---------------------------------------------------------------------------
+
 
 class TestAlembicMigrations:
     def _make_cfg(self, db_url: str) -> Config:
@@ -193,9 +205,15 @@ class TestAlembicMigrations:
         engine = create_engine(db_url)
         tables = set(inspect(engine).get_table_names())
         expected = {
-            "candles", "signals", "paper_accounts", "positions",
-            "orders", "trades", "strategy_configs",
-            "daily_risk_states", "system_events",
+            "candles",
+            "signals",
+            "paper_accounts",
+            "positions",
+            "orders",
+            "trades",
+            "strategy_configs",
+            "daily_risk_states",
+            "system_events",
         }
         assert expected.issubset(tables), f"Missing: {expected - tables}"
         engine.dispose()
@@ -234,11 +252,22 @@ class TestAlembicMigrations:
         engine.dispose()
 
         required = {
-            "id", "symbol", "interval", "open_time",
-            "open", "high", "low", "close", "volume",
-            "close_time", "quote_asset_volume", "trades",
-            "taker_buy_base_volume", "taker_buy_quote_volume",
-            "is_closed", "created_at",
+            "id",
+            "symbol",
+            "interval",
+            "open_time",
+            "open",
+            "high",
+            "low",
+            "close",
+            "volume",
+            "close_time",
+            "quote_asset_volume",
+            "trades",
+            "taker_buy_base_volume",
+            "taker_buy_quote_volume",
+            "is_closed",
+            "created_at",
         }
         assert required.issubset(col_names), f"Missing columns: {required - col_names}"
 
@@ -253,6 +282,7 @@ class TestAlembicMigrations:
 
         kline = _kline(1_800_000_000_000)
         from app.repositories.candle_repository import _candle_from_kline
+
         candle1 = _candle_from_kline(kline)
         candle2 = _candle_from_kline(kline)  # same key
 
@@ -261,6 +291,7 @@ class TestAlembicMigrations:
         session.add(candle2)
 
         from sqlalchemy.exc import IntegrityError
+
         with pytest.raises(IntegrityError):
             session.commit()
 

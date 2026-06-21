@@ -1,8 +1,8 @@
 """Tests for HTTP 429, 418, 5xx and network error handling in BinanceMarketDataClient."""
 
+import httpx
 import pytest
 import respx
-import httpx
 
 from app.market_data.client import BinanceMarketDataClient
 from app.market_data.exceptions import BannedError, MaxRetriesError, RateLimitError
@@ -12,7 +12,9 @@ _TIME_PATH = "/api/v3/time"
 _TIME_RESPONSE = {"serverTime": 1700000000000}
 
 
-def _make_client(max_retries=2, max_retry_after=10, **kwargs) -> tuple[BinanceMarketDataClient, list[float]]:
+def _make_client(
+    max_retries=2, max_retry_after=10, **kwargs
+) -> tuple[BinanceMarketDataClient, list[float]]:
     """Create client with injectable sleep and jitter (no real waiting in tests)."""
     slept: list[float] = []
 
@@ -77,9 +79,7 @@ class TestRateLimiting:
         client, slept = _make_client(max_retries=1, max_retry_after=5)
 
         with respx.mock(base_url=_BASE) as mock:
-            mock.get(_TIME_PATH).return_value = httpx.Response(
-                429, headers={"Retry-After": "3"}
-            )
+            mock.get(_TIME_PATH).return_value = httpx.Response(429, headers={"Retry-After": "3"})
             with pytest.raises(RateLimitError) as exc_info:
                 await client.get_server_time()
 
@@ -93,9 +93,7 @@ class TestBanned:
         client, slept = _make_client(max_retries=3)
 
         with respx.mock(base_url=_BASE) as mock:
-            mock.get(_TIME_PATH).return_value = httpx.Response(
-                418, headers={"Retry-After": "300"}
-            )
+            mock.get(_TIME_PATH).return_value = httpx.Response(418, headers={"Retry-After": "300"})
             with pytest.raises(BannedError) as exc_info:
                 await client.get_server_time()
 
@@ -183,6 +181,7 @@ class TestClientErrors:
                 400, json={"code": -1121, "msg": "Invalid symbol"}
             )
             from app.market_data.exceptions import MarketDataError
+
             with pytest.raises(MarketDataError, match="HTTP 400"):
                 await client.get_server_time()
 
@@ -195,6 +194,7 @@ class TestClientErrors:
         with respx.mock(base_url=_BASE) as mock:
             mock.get(_TIME_PATH).return_value = httpx.Response(401)
             from app.market_data.exceptions import MarketDataError
+
             with pytest.raises(MarketDataError, match="HTTP 401"):
                 await client.get_server_time()
 
@@ -224,6 +224,7 @@ class TestClientLifecycle:
         await client.close()
 
         from app.market_data.exceptions import ClientClosedError
+
         with pytest.raises(ClientClosedError):
             await client.get_server_time()
 
@@ -240,6 +241,7 @@ class TestForbiddenPaths:
     async def test_order_path_blocked(self):
         client, _ = _make_client()
         from app.market_data.exceptions import MarketDataError
+
         with pytest.raises(MarketDataError, match="forbidden"):
             await client._request("POST", "/api/v3/order")
 
@@ -247,6 +249,7 @@ class TestForbiddenPaths:
     async def test_account_path_blocked(self):
         client, _ = _make_client()
         from app.market_data.exceptions import MarketDataError
+
         with pytest.raises(MarketDataError, match="forbidden"):
             await client._request("GET", "/api/v3/account")
 

@@ -25,14 +25,18 @@ class Candle(Base):
     close: Mapped[Decimal] = mapped_column(Numeric(30, 10, asdecimal=True), nullable=False)
     volume: Mapped[Decimal] = mapped_column(Numeric(30, 10, asdecimal=True), nullable=False)
     close_time: Mapped[int] = mapped_column(BigInteger, nullable=False)
-    quote_asset_volume: Mapped[Decimal] = mapped_column(Numeric(30, 10, asdecimal=True), nullable=False)
-    trades: Mapped[int] = mapped_column(BigInteger, nullable=False)
-    taker_buy_base_volume: Mapped[Decimal] = mapped_column(Numeric(30, 10, asdecimal=True), nullable=False)
-    taker_buy_quote_volume: Mapped[Decimal] = mapped_column(Numeric(30, 10, asdecimal=True), nullable=False)
-    is_closed: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)
-    created_at: Mapped[datetime] = mapped_column(
-        DateTime, default=datetime.utcnow, nullable=False
+    quote_asset_volume: Mapped[Decimal] = mapped_column(
+        Numeric(30, 10, asdecimal=True), nullable=False
     )
+    trades: Mapped[int] = mapped_column(BigInteger, nullable=False)
+    taker_buy_base_volume: Mapped[Decimal] = mapped_column(
+        Numeric(30, 10, asdecimal=True), nullable=False
+    )
+    taker_buy_quote_volume: Mapped[Decimal] = mapped_column(
+        Numeric(30, 10, asdecimal=True), nullable=False
+    )
+    is_closed: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, nullable=False)
 
     def __repr__(self) -> str:
         return f"<Candle {self.symbol} {self.interval} @{self.open_time}>"

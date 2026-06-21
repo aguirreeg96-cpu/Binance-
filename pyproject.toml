@@ -1,0 +1,30 @@
+[tool.ruff]
+line-length = 100
+target-version = "py311"
+
+[tool.ruff.lint]
+select = ["E", "F", "W", "I", "UP", "B", "C4"]
+ignore = [
+    "B008",   # do-not-perform-function-call-in-default-argument (FastAPI Depends pattern)
+    "UP007",  # use-x-or-y-for-union (X | Y requires 3.10+ at runtime; annotations ok)
+]
+
+[tool.ruff.lint.per-file-ignores]
+"alembic/**" = ["F401", "E402"]
+"tests/**"   = ["B011"]
+
+[tool.ruff.format]
+quote-style = "double"
+indent-style = "space"
+
+
+[tool.mypy]
+python_version = "3.11"
+files = ["app"]
+ignore_missing_imports = true
+disallow_untyped_defs = true
+warn_return_any = false
+warn_unused_ignores = true
+no_implicit_optional = true
+
+

@@ -32,6 +32,7 @@ def _make_settings(**overrides):
 # Trading mode
 # ---------------------------------------------------------------------------
 
+
 class TestTradingModeDefaults:
     def test_default_mode_is_paper(self):
         s = _make_settings()
@@ -62,6 +63,7 @@ class TestTradingModeDefaults:
 # ---------------------------------------------------------------------------
 # DEMO mode credential guard
 # ---------------------------------------------------------------------------
+
 
 class TestDemoModeCredentialGuard:
     def test_demo_without_api_key_raises(self):
@@ -95,6 +97,7 @@ class TestDemoModeCredentialGuard:
 # URL allowlist — market data URL
 # ---------------------------------------------------------------------------
 
+
 class TestMarketDataUrlGuard:
     def test_default_market_data_url_accepted(self):
         s = _make_settings()
@@ -111,15 +114,11 @@ class TestMarketDataUrlGuard:
     def test_malicious_subdomain_rejected(self):
         """data-api.binance.vision.evil.com must be rejected (hostname check, not substring)."""
         with pytest.raises(ValidationError, match="allowlist"):
-            _make_settings(
-                binance_market_data_url="https://data-api.binance.vision.evil.com"
-            )
+            _make_settings(binance_market_data_url="https://data-api.binance.vision.evil.com")
 
     def test_embedded_credentials_rejected(self):
         with pytest.raises(ValidationError, match="credentials"):
-            _make_settings(
-                binance_market_data_url="https://user:pass@data-api.binance.vision"
-            )
+            _make_settings(binance_market_data_url="https://user:pass@data-api.binance.vision")
 
     def test_unknown_host_rejected(self):
         with pytest.raises(ValidationError, match="allowlist"):
@@ -129,6 +128,7 @@ class TestMarketDataUrlGuard:
 # ---------------------------------------------------------------------------
 # URL allowlist — trading URL
 # ---------------------------------------------------------------------------
+
 
 class TestTradingUrlGuard:
     def test_default_trading_url_accepted(self):
@@ -145,9 +145,7 @@ class TestTradingUrlGuard:
 
     def test_embedded_credentials_in_trading_url_rejected(self):
         with pytest.raises(ValidationError, match="credentials"):
-            _make_settings(
-                binance_trading_url="https://key:secret@demo-api.binance.com"
-            )
+            _make_settings(binance_trading_url="https://key:secret@demo-api.binance.com")
 
     def test_stream_binance_rejected_as_trading(self):
         with pytest.raises(ValidationError):
@@ -157,6 +155,7 @@ class TestTradingUrlGuard:
 # ---------------------------------------------------------------------------
 # URL allowlist — WebSocket URL
 # ---------------------------------------------------------------------------
+
 
 class TestMarketWsUrlGuard:
     def test_default_ws_url_accepted(self):
@@ -169,9 +168,7 @@ class TestMarketWsUrlGuard:
 
     def test_malicious_ws_host_rejected(self):
         with pytest.raises(ValidationError, match="allowlist"):
-            _make_settings(
-                binance_market_ws_url="wss://data-stream.binance.vision.evil.com"
-            )
+            _make_settings(binance_market_ws_url="wss://data-stream.binance.vision.evil.com")
 
     def test_stream_binance_rejected_as_ws(self):
         with pytest.raises(ValidationError):
@@ -181,6 +178,7 @@ class TestMarketWsUrlGuard:
 # ---------------------------------------------------------------------------
 # API key masking
 # ---------------------------------------------------------------------------
+
 
 class TestApiKeyMasking:
     def test_long_key_is_masked(self):
@@ -208,14 +206,17 @@ class TestApiKeyMasking:
 # Risk defaults
 # ---------------------------------------------------------------------------
 
+
 class TestRiskDefaults:
     def test_risk_per_trade_default(self):
         from decimal import Decimal
+
         s = _make_settings()
         assert s.risk_per_trade == Decimal("0.005")
 
     def test_daily_loss_limit_default(self):
         from decimal import Decimal
+
         s = _make_settings()
         assert s.daily_loss_limit == Decimal("0.01")
 
@@ -229,5 +230,6 @@ class TestRiskDefaults:
 
     def test_paper_initial_balance_default(self):
         from decimal import Decimal
+
         s = _make_settings()
         assert s.paper_initial_balance == Decimal("10000.00")

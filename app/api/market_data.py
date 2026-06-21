@@ -7,7 +7,7 @@ POST /api/v1/market-data/download — download from Binance and persist
 
 import logging
 import uuid
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from decimal import Decimal
 from typing import Annotated, Literal
 
@@ -42,13 +42,15 @@ _MIN_LIMIT = 1
 # Dependencies
 # ---------------------------------------------------------------------------
 
+
 async def get_market_data_client(request: Request) -> MarketDataClient:
-    return request.app.state.market_data_client  # type: ignore[no-any-return]
+    return request.app.state.market_data_client
 
 
 # ---------------------------------------------------------------------------
 # Response schemas
 # ---------------------------------------------------------------------------
+
 
 class KlineResponse(BaseModel):
     model_config = ConfigDict(from_attributes=True)
@@ -69,19 +71,25 @@ class KlineResponse(BaseModel):
     taker_buy_quote_volume: Decimal
     is_closed: bool
 
-    @computed_field  # type: ignore[misc]
+    @computed_field  # type: ignore[prop-decorator]
     @property
     def open_time_iso(self) -> str:
         return _ms_to_iso(self.open_time)
 
-    @computed_field  # type: ignore[misc]
+    @computed_field  # type: ignore[prop-decorator]
     @property
     def close_time_iso(self) -> str:
         return _ms_to_iso(self.close_time)
 
     @field_serializer(
-        "open", "high", "low", "close", "volume",
-        "quote_asset_volume", "taker_buy_base_volume", "taker_buy_quote_volume",
+        "open",
+        "high",
+        "low",
+        "close",
+        "volume",
+        "quote_asset_volume",
+        "taker_buy_base_volume",
+        "taker_buy_quote_volume",
     )
     def serialize_decimal(self, v: Decimal) -> str:
         return str(v)
@@ -103,9 +111,7 @@ class DownloadRequest(BaseModel):
     @classmethod
     def validate_interval_field(cls, v: str) -> str:
         if v not in VALID_INTERVALS:
-            raise ValueError(
-                f"Invalid interval {v!r}. Valid values: {sorted(VALID_INTERVALS)}"
-            )
+            raise ValueError(f"Invalid interval {v!r}. Valid values: {sorted(VALID_INTERVALS)}")
         return v
 
     @field_validator("start", "end", mode="after")
@@ -146,6 +152,7 @@ class DownloadResponse(BaseModel):
 # Endpoints
 # ---------------------------------------------------------------------------
 
+
 @router.get("/klines", response_model=list[KlineResponse])
 async def get_klines(
     symbol: Annotated[str, Query(min_length=2, max_length=20)],
@@ -178,9 +185,9 @@ async def get_klines(
     start_ms: int | None = None
     end_ms: int | None = None
     if start:
-        start_ms = int(start.astimezone(timezone.utc).timestamp() * 1000)
+        start_ms = int(start.astimezone(UTC).timestamp() * 1000)
     if end:
-        end_ms = int(end.astimezone(timezone.utc).timestamp() * 1000)
+        end_ms = int(end.astimezone(UTC).timestamp() * 1000)
 
     server_time_ms: int | None = None
     if not include_open_candle:
@@ -212,9 +219,14 @@ async def download_klines(
     client: MarketDataClient = Depends(get_market_data_client),
 ) -> DownloadResponse:
     request_id = str(uuid.uuid4())
-    logger.info("[%s] Download request: %s %s %s → %s",
-                request_id, body.symbol, body.interval,
-                body.start.isoformat(), body.end.isoformat())
+    logger.info(
+        "[%s] Download request: %s %s %s → %s",
+        request_id,
+        body.symbol,
+        body.interval,
+        body.start.isoformat(),
+        body.end.isoformat(),
+    )
 
     # Cross-field range validation
     if body.start >= body.end:
@@ -261,12 +273,12 @@ async def download_klines(
             detail=f"Rate limited by Binance. Retry after {exc.retry_after}s.",
             headers={"Retry-After": str(exc.retry_after)},
         ) from exc
-    except BannedError:
+    except BannedError as exc:
         db.rollback()
         raise HTTPException(
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
             detail="Temporarily unavailable. Please try again later.",
-        )
+        ) from exc
     except (MaxRequestsError, PaginationStallError, MarketDataError) as exc:
         db.rollback()
         logger.error("[%s] Download failed: %s", request_id, exc)
@@ -300,4 +312,4 @@ async def download_klines(
 
 
 def _ms_to_iso(ms: int) -> str:
-    return datetime.fromtimestamp(ms / 1000.0, tz=timezone.utc).isoformat()
+    return datetime.fromtimestamp(ms / 1000.0, tz=UTC).isoformat()

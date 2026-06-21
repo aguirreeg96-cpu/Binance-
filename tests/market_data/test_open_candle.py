@@ -1,9 +1,5 @@
 """Tests for open-candle filtering logic."""
 
-from datetime import datetime, timezone
-
-import pytest
-
 from app.market_data.kline_parser import KlineData
 
 # A candle's close_time is the LAST millisecond of the interval.
@@ -17,7 +13,8 @@ _CLOSE_TIME = 1_700_003_599_999  # 1-hour candle, last ms inclusive
 
 def _make_kline(open_time=_OPEN_TIME, close_time=_CLOSE_TIME) -> KlineData:
     return KlineData(
-        symbol="BTCUSDT", interval="1h",
+        symbol="BTCUSDT",
+        interval="1h",
         open_time=open_time,
         open=__import__("decimal").Decimal("35000"),
         high=__import__("decimal").Decimal("35500"),

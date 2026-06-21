@@ -3,7 +3,6 @@
 from datetime import date, datetime
 from decimal import Decimal
 
-import pytest
 from sqlalchemy import inspect
 
 from app.models.candle import Candle
@@ -31,9 +30,15 @@ class TestSchemaCreation:
         engine = db_session.get_bind()
         tables = set(inspect(engine).get_table_names())
         expected = {
-            "candles", "signals", "paper_accounts", "positions",
-            "orders", "trades", "strategy_configs",
-            "daily_risk_states", "system_events",
+            "candles",
+            "signals",
+            "paper_accounts",
+            "positions",
+            "orders",
+            "trades",
+            "strategy_configs",
+            "daily_risk_states",
+            "system_events",
         }
         assert expected.issubset(tables), f"Missing tables: {expected - tables}"
 
@@ -66,11 +71,15 @@ class TestCandleModel:
 
     def test_all_numeric_columns_return_decimal(self, db_session):
         candle = Candle(
-            symbol="ETHUSDT", interval="15m",
+            symbol="ETHUSDT",
+            interval="15m",
             open_time=1700010000000,
-            open=Decimal("2000.00"), high=Decimal("2050.00"),
-            low=Decimal("1980.00"), close=Decimal("2020.00"),
-            volume=Decimal("500.0"), close_time=1700010899999,
+            open=Decimal("2000.00"),
+            high=Decimal("2050.00"),
+            low=Decimal("1980.00"),
+            close=Decimal("2020.00"),
+            volume=Decimal("500.0"),
+            close_time=1700010899999,
             quote_asset_volume=Decimal("1000000.00"),
             trades=800,
             taker_buy_base_volume=Decimal("250.0"),
@@ -81,13 +90,17 @@ class TestCandleModel:
         db_session.commit()
         db_session.expire(candle)  # force reload from DB
 
-        row = db_session.query(Candle).filter_by(
-            symbol="ETHUSDT", interval="15m"
-        ).first()
+        row = db_session.query(Candle).filter_by(symbol="ETHUSDT", interval="15m").first()
 
         for field_name in (
-            "open", "high", "low", "close", "volume",
-            "quote_asset_volume", "taker_buy_base_volume", "taker_buy_quote_volume",
+            "open",
+            "high",
+            "low",
+            "close",
+            "volume",
+            "quote_asset_volume",
+            "taker_buy_base_volume",
+            "taker_buy_quote_volume",
         ):
             val = getattr(row, field_name)
             assert isinstance(val, Decimal), (

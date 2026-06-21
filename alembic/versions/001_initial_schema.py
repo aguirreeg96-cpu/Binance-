@@ -5,9 +5,11 @@ Revises:
 Create Date: 2025-01-01 00:00:00.000000
 """
 
-from typing import Sequence, Union
+from collections.abc import Sequence
+from typing import Union
 
 import sqlalchemy as sa
+
 from alembic import op
 
 revision: str = "001"
@@ -40,11 +42,14 @@ def upgrade() -> None:
         sa.UniqueConstraint("symbol", "interval", "open_time", name="uq_candle"),
     )
     op.create_index(
-        "ix_candle_symbol_interval_time", "candles",
+        "ix_candle_symbol_interval_time",
+        "candles",
         ["symbol", "interval", "open_time"],
     )
     op.create_index(
-        "ix_candle_symbol_interval", "candles", ["symbol", "interval"],
+        "ix_candle_symbol_interval",
+        "candles",
+        ["symbol", "interval"],
     )
 
     # ------------------------------------------------------------------ signals
@@ -212,9 +217,7 @@ def upgrade() -> None:
         sa.Column("trading_mode", sa.String(10), nullable=False),
         sa.PrimaryKeyConstraint("id"),
     )
-    op.create_index(
-        "ix_system_event_level_ts", "system_events", ["level", "timestamp"]
-    )
+    op.create_index("ix_system_event_level_ts", "system_events", ["level", "timestamp"])
     op.create_index("ix_system_events_timestamp", "system_events", ["timestamp"])
 
 
