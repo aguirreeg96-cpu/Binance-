@@ -217,7 +217,13 @@ class HistoricalDataService:
         return result
 
     async def _validate_symbol(self, symbol: str) -> None:
-        """Validate symbol is in TRADING status on Spot."""
+        """Validate symbol is in TRADING status on Spot.
+
+        Binance's exchangeInfo has evolved: newer responses carry
+        isSpotTradingAllowed (bool) as the authoritative field and may have an
+        empty legacy `permissions` list.  Fall back to checking `permissions`
+        or `permissionSets` when the boolean flag is absent.
+        """
         try:
             info = await self.client.get_exchange_info(symbol)
         except MarketDataError as exc:
@@ -235,7 +241,20 @@ class HistoricalDataService:
                 symbol,
                 f"status is {sym_info.get('status')!r}, expected 'TRADING'",
             )
-        if "SPOT" not in sym_info.get("permissions", []):
+
+        # Modern API: isSpotTradingAllowed is the authoritative boolean.
+        # Legacy API: check permissions list or permissionSets groups.
+        spot_flag = sym_info.get("isSpotTradingAllowed")
+        if isinstance(spot_flag, bool):
+            spot_allowed = spot_flag
+        else:
+            permissions: list = sym_info.get("permissions", [])
+            permission_sets: list = sym_info.get("permissionSets", [])
+            spot_allowed = "SPOT" in permissions or any(
+                "SPOT" in group for group in permission_sets
+            )
+
+        if not spot_allowed:
             raise InvalidSymbolError(symbol, "SPOT permission not available for this symbol")
 
 
