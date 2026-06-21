@@ -74,6 +74,7 @@ def create_app() -> FastAPI:
     )
 
     # Routers
+    from app.api.backtesting import router as backtesting_router
     from app.api.indicators import router as indicators_router
     from app.api.market_data import router as market_data_router
     from app.api.strategy import router as strategy_router
@@ -81,6 +82,7 @@ def create_app() -> FastAPI:
     app.include_router(market_data_router)
     app.include_router(indicators_router)
     app.include_router(strategy_router)
+    app.include_router(backtesting_router)
 
     @app.get("/health", tags=["system"])
     async def health() -> dict[str, str]:
