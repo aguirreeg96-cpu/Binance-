@@ -71,12 +71,12 @@ class KlineResponse(BaseModel):
     taker_buy_quote_volume: Decimal
     is_closed: bool
 
-    @computed_field  # type: ignore[prop-decorator]
+    @computed_field  # type: ignore[misc]
     @property
     def open_time_iso(self) -> str:
         return _ms_to_iso(self.open_time)
 
-    @computed_field  # type: ignore[prop-decorator]
+    @computed_field  # type: ignore[misc]
     @property
     def close_time_iso(self) -> str:
         return _ms_to_iso(self.close_time)

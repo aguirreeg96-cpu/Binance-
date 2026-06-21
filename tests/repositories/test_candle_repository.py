@@ -3,11 +3,11 @@
 from decimal import Decimal
 
 import pytest
-from alembic.config import Config
 from sqlalchemy import create_engine, inspect, text
 from sqlalchemy.orm import sessionmaker
 
 from alembic import command
+from alembic.config import Config
 from app.market_data.kline_parser import KlineData
 from app.models.candle import Candle
 from app.repositories.candle_repository import CandleRepository, UpsertResult
@@ -117,9 +117,9 @@ class TestUpsertBatch:
             "taker_buy_quote_volume",
         ):
             val = getattr(row, field_name)
-            assert isinstance(val, Decimal), (
-                f"Column {field_name!r} should return Decimal, got {type(val)}"
-            )
+            assert isinstance(
+                val, Decimal
+            ), f"Column {field_name!r} should return Decimal, got {type(val)}"
 
     def test_mixed_insert_update_ignored(self, repo, alembic_session):
         t0 = 1_700_040_000_000
