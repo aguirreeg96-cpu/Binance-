@@ -135,6 +135,95 @@ class CandleRepository:
 
         return list(self.session.scalars(stmt).all())
 
+    def query_for_indicators(
+        self,
+        symbol: str,
+        interval: str,
+        warmup_count: int = 0,
+        start_ms: int | None = None,
+        end_ms: int | None = None,
+        limit: int | None = None,
+    ) -> tuple[list[Candle], int]:
+        """Query closed candles for indicator calculation, prepending warmup history.
+
+        Returns (all_candles, warmup_len) where:
+        - all_candles = warmup_prefix + requested_range (ascending open_time)
+        - warmup_len  = number of leading warmup candles
+
+        Callers should run IndicatorCalculator on all_candles and return
+        only results[warmup_len:] to avoid leaking warmup-only data.
+
+        limit vs start_ms behaviour:
+        - start_ms given: ascending from start_ms, limit applied going forward.
+        - start_ms absent + limit given: the most recent `limit` closed candles
+          (descending fetch, reversed) so the user sees the freshest data.
+        - Neither: all closed candles in ascending order (apply max_candles
+          guard at the API layer).
+        """
+        sym = symbol.upper()
+
+        if start_ms is not None:
+            # Anchor on start: ascending from start_ms
+            stmt = (
+                select(Candle)
+                .where(Candle.symbol == sym)
+                .where(Candle.interval == interval)
+                .where(Candle.is_closed == True)  # noqa: E712
+                .where(Candle.open_time >= start_ms)
+                .order_by(Candle.open_time.asc())
+            )
+            if end_ms is not None:
+                stmt = stmt.where(Candle.open_time < end_ms)
+            if limit is not None:
+                stmt = stmt.limit(limit)
+            requested = list(self.session.scalars(stmt).all())
+
+        elif limit is not None:
+            # No anchor: fetch the most recent `limit` candles
+            desc_stmt = (
+                select(Candle)
+                .where(Candle.symbol == sym)
+                .where(Candle.interval == interval)
+                .where(Candle.is_closed == True)  # noqa: E712
+                .order_by(Candle.open_time.desc())
+                .limit(limit)
+            )
+            if end_ms is not None:
+                desc_stmt = desc_stmt.where(Candle.open_time < end_ms)
+            requested = list(reversed(list(self.session.scalars(desc_stmt).all())))
+
+        else:
+            # No anchor, no limit: all closed candles
+            stmt = (
+                select(Candle)
+                .where(Candle.symbol == sym)
+                .where(Candle.interval == interval)
+                .where(Candle.is_closed == True)  # noqa: E712
+                .order_by(Candle.open_time.asc())
+            )
+            if end_ms is not None:
+                stmt = stmt.where(Candle.open_time < end_ms)
+            requested = list(self.session.scalars(stmt).all())
+
+        if not requested or warmup_count <= 0:
+            return requested, 0
+
+        # Fetch warmup candles strictly before the first requested candle
+        first_open_time = requested[0].open_time
+        warmup_stmt = (
+            select(Candle)
+            .where(Candle.symbol == sym)
+            .where(Candle.interval == interval)
+            .where(Candle.is_closed == True)  # noqa: E712
+            .where(Candle.open_time < first_open_time)
+            .order_by(Candle.open_time.desc())
+            .limit(warmup_count)
+        )
+        warmup = list(self.session.scalars(warmup_stmt).all())
+        warmup.reverse()  # restore ascending order
+
+        return warmup + requested, len(warmup)
+
 
 # ---------------------------------------------------------------------------
 # Private helpers
