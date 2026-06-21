@@ -7,6 +7,19 @@ Upsert strategy (avoids rowcount ambiguity):
   3. Execute INSERT for new, UPDATE for changed; skip ignored rows.
   4. All operations run in the session's current transaction — the caller
      controls commit/rollback.
+
+Decimal normalisation:
+  All Decimal fields are quantized to 10 decimal places (ROUND_HALF_EVEN)
+  via normalize_decimal() before insert, update, and comparison.  This
+  ensures that the stored representation and the incoming KlineData value
+  are always compared at the same scale, preventing false 'updated'
+  results on idempotent re-downloads.
+
+SQL ordering note:
+  Financial columns (open, high, close, …) are stored as VARCHAR(50) on
+  SQLite (ExactDecimal / TEXT affinity).  Never use ORDER BY, SUM, AVG,
+  MIN, or MAX directly on those columns in SQL; use open_time (BigInteger)
+  for ordering and perform financial aggregations in Python with Decimal.
 """
 
 import logging
@@ -18,10 +31,14 @@ from sqlalchemy.orm import Session
 
 from app.market_data.kline_parser import KlineData
 from app.models.candle import Candle
+from app.models.types import normalize_decimal
 
 logger = logging.getLogger(__name__)
 
-_COMPARE_FIELDS = (
+# Explicit immutable tuple of Binance-sourced fields used for change detection.
+# Excludes: id, created_at, and any internally generated metadata — a
+# difference in those fields must never trigger an 'updated' classification.
+_BINANCE_FIELDS: tuple[str, ...] = (
     "open",
     "high",
     "low",
@@ -117,6 +134,9 @@ class CandleRepository:
         start_ms — inclusive lower bound on open_time (ms).
         end_ms   — exclusive upper bound on open_time (ms).
         include_open_candle=False requires server_time_ms to filter.
+
+        Always order by open_time (BigInteger). Financial columns are
+        TEXT on SQLite and must not be used for SQL ordering or aggregation.
         """
         stmt = (
             select(Candle)
@@ -235,43 +255,52 @@ def _candle_from_kline(kd: KlineData) -> Candle:
         symbol=kd.symbol,
         interval=kd.interval,
         open_time=kd.open_time,
-        open=kd.open,
-        high=kd.high,
-        low=kd.low,
-        close=kd.close,
-        volume=kd.volume,
+        open=normalize_decimal(kd.open),
+        high=normalize_decimal(kd.high),
+        low=normalize_decimal(kd.low),
+        close=normalize_decimal(kd.close),
+        volume=normalize_decimal(kd.volume),
         close_time=kd.close_time,
-        quote_asset_volume=kd.quote_asset_volume,
+        quote_asset_volume=normalize_decimal(kd.quote_asset_volume),
         trades=kd.number_of_trades,
-        taker_buy_base_volume=kd.taker_buy_base_volume,
-        taker_buy_quote_volume=kd.taker_buy_quote_volume,
+        taker_buy_base_volume=normalize_decimal(kd.taker_buy_base_volume),
+        taker_buy_quote_volume=normalize_decimal(kd.taker_buy_quote_volume),
         is_closed=True,
     )
 
 
 def _apply_update(row: Candle, kd: KlineData) -> None:
-    row.open = kd.open
-    row.high = kd.high
-    row.low = kd.low
-    row.close = kd.close
-    row.volume = kd.volume
+    row.open = normalize_decimal(kd.open)
+    row.high = normalize_decimal(kd.high)
+    row.low = normalize_decimal(kd.low)
+    row.close = normalize_decimal(kd.close)
+    row.volume = normalize_decimal(kd.volume)
     row.close_time = kd.close_time
-    row.quote_asset_volume = kd.quote_asset_volume
+    row.quote_asset_volume = normalize_decimal(kd.quote_asset_volume)
     row.trades = kd.number_of_trades
-    row.taker_buy_base_volume = kd.taker_buy_base_volume
-    row.taker_buy_quote_volume = kd.taker_buy_quote_volume
+    row.taker_buy_base_volume = normalize_decimal(kd.taker_buy_base_volume)
+    row.taker_buy_quote_volume = normalize_decimal(kd.taker_buy_quote_volume)
 
 
 def _has_changes(row: Candle, kd: KlineData) -> bool:
+    """Return True if any Binance-sourced field differs from the stored value.
+
+    All Decimal comparisons normalise the incoming KlineData value to the
+    same 10-decimal-place scale used on write, so a re-download of identical
+    data never produces a false positive.
+
+    Fields excluded from comparison: id, created_at, and any internally
+    generated metadata (see _BINANCE_FIELDS for the complete authoritative list).
+    """
     return (
-        row.open != kd.open
-        or row.high != kd.high
-        or row.low != kd.low
-        or row.close != kd.close
-        or row.volume != kd.volume
+        row.open != normalize_decimal(kd.open)
+        or row.high != normalize_decimal(kd.high)
+        or row.low != normalize_decimal(kd.low)
+        or row.close != normalize_decimal(kd.close)
+        or row.volume != normalize_decimal(kd.volume)
         or row.close_time != kd.close_time
-        or row.quote_asset_volume != kd.quote_asset_volume
+        or row.quote_asset_volume != normalize_decimal(kd.quote_asset_volume)
         or row.trades != kd.number_of_trades
-        or row.taker_buy_base_volume != kd.taker_buy_base_volume
-        or row.taker_buy_quote_volume != kd.taker_buy_quote_volume
+        or row.taker_buy_base_volume != normalize_decimal(kd.taker_buy_base_volume)
+        or row.taker_buy_quote_volume != normalize_decimal(kd.taker_buy_quote_volume)
     )

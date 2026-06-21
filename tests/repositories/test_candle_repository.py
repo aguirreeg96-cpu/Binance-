@@ -10,6 +10,7 @@ from alembic import command
 from alembic.config import Config
 from app.market_data.kline_parser import KlineData
 from app.models.candle import Candle
+from app.models.types import normalize_decimal
 from app.repositories.candle_repository import CandleRepository, UpsertResult
 
 # ---------------------------------------------------------------------------
@@ -297,4 +298,265 @@ class TestAlembicMigrations:
 
         session.rollback()
         session.close()
+        engine.dispose()
+
+    def test_002_upgrade_changes_candle_decimal_columns_to_varchar(self, tmp_path):
+        """After running migration 002, candle decimal columns must be VARCHAR(50)."""
+        db_url = f"sqlite:///{tmp_path}/pragma_test.db"
+        cfg = self._make_cfg(db_url)
+        command.upgrade(cfg, "head")
+
+        engine = create_engine(db_url)
+        with engine.connect() as conn:
+            cols = conn.execute(text("PRAGMA table_info(candles)")).fetchall()
+        # PRAGMA columns: (cid, name, type, notnull, dflt_value, pk)
+        col_type_map = {row[1]: row[2] for row in cols}
+        decimal_cols = (
+            "open",
+            "high",
+            "low",
+            "close",
+            "volume",
+            "quote_asset_volume",
+            "taker_buy_base_volume",
+            "taker_buy_quote_volume",
+        )
+        for col in decimal_cols:
+            assert (
+                "VARCHAR" in col_type_map[col].upper()
+            ), f"Column {col!r} expected VARCHAR(50), got {col_type_map[col]!r}"
+        engine.dispose()
+
+    def test_002_downgrade_reverts_columns_to_numeric(self, tmp_path):
+        db_url = f"sqlite:///{tmp_path}/downgrade002_test.db"
+        cfg = self._make_cfg(db_url)
+        command.upgrade(cfg, "head")
+        command.downgrade(cfg, "001")
+
+        engine = create_engine(db_url)
+        with engine.connect() as conn:
+            cols = conn.execute(text("PRAGMA table_info(candles)")).fetchall()
+        col_type_map = {row[1]: row[2] for row in cols}
+        # After downgrade to 001, columns should be NUMERIC (not VARCHAR)
+        assert "VARCHAR" not in col_type_map["open"].upper()
+        engine.dispose()
+
+    def test_002_upgrade_downgrade_upgrade_cycle(self, tmp_path):
+        db_url = f"sqlite:///{tmp_path}/cycle002_test.db"
+        cfg = self._make_cfg(db_url)
+        command.upgrade(cfg, "head")
+        command.downgrade(cfg, "001")
+        command.upgrade(cfg, "head")
+
+        engine = create_engine(db_url)
+        with engine.connect() as conn:
+            cols = conn.execute(text("PRAGMA table_info(candles)")).fetchall()
+        col_type_map = {row[1]: row[2] for row in cols}
+        assert "VARCHAR" in col_type_map["open"].upper()
+        engine.dispose()
+
+
+# ---------------------------------------------------------------------------
+# Idempotency regression tests — the core bug fix
+# ---------------------------------------------------------------------------
+
+
+def _large_decimal_kline(open_time: int = 1_900_000_000_000) -> KlineData:
+    """KlineData with the exact values that triggered the idempotency bug."""
+    return KlineData(
+        symbol="BTCUSDT",
+        interval="15m",
+        open_time=open_time,
+        open=Decimal("42150.32000000"),
+        high=Decimal("42300.00000000"),
+        low=Decimal("42100.00000000"),
+        close=Decimal("42200.50000000"),
+        volume=Decimal("1253.48700000"),
+        close_time=open_time + 900_000 - 1,
+        quote_asset_volume=Decimal("10753491.66553520"),  # the problematic field
+        number_of_trades=8742,
+        taker_buy_base_volume=Decimal("651.23400000"),
+        taker_buy_quote_volume=Decimal("27481234.87654321"),  # also had float64 error
+    )
+
+
+class TestIdempotencyRegression:
+    """Regression suite for the float64 round-trip idempotency bug.
+
+    Root cause: SQLite's NUMERIC affinity converted Decimal strings to REAL
+    (float64), introducing errors of ~4e-10 for values with >15 significant
+    digits.  A re-download of identical candles would then detect spurious
+    differences (e.g. stored=10753491.6655352004 vs incoming=10753491.66553520)
+    and classify them as 'updated'.
+
+    Fix: ExactDecimal stores values as VARCHAR(50) with TEXT affinity, and
+    normalize_decimal() ensures insert, update, and comparison all use the
+    same 10-decimal-place scale.
+    """
+
+    def test_second_identical_download_large_decimals_ignored(self, repo, alembic_session):
+        klines = [_large_decimal_kline()]
+        repo.upsert_batch(klines)
+        alembic_session.commit()
+
+        result = repo.upsert_batch(klines)
+        alembic_session.commit()
+
+        assert result.inserted == 0
+        assert result.updated == 0
+        assert result.ignored == 1
+
+    def test_real_change_in_close_still_produces_update(self, repo, alembic_session):
+        t0 = 1_900_100_000_000
+        repo.upsert_batch([_large_decimal_kline(t0)])
+        alembic_session.commit()
+
+        changed = KlineData(
+            symbol="BTCUSDT",
+            interval="15m",
+            open_time=t0,
+            open=Decimal("42150.32000000"),
+            high=Decimal("42300.00000000"),
+            low=Decimal("42100.00000000"),
+            close=Decimal("43000.00000000"),  # real change
+            volume=Decimal("1253.48700000"),
+            close_time=t0 + 900_000 - 1,
+            quote_asset_volume=Decimal("10753491.66553520"),
+            number_of_trades=8742,
+            taker_buy_base_volume=Decimal("651.23400000"),
+            taker_buy_quote_volume=Decimal("27481234.87654321"),
+        )
+        result = repo.upsert_batch([changed])
+        alembic_session.commit()
+
+        assert result.updated == 1
+        assert result.ignored == 0
+
+        row = alembic_session.query(Candle).filter_by(open_time=t0).one()
+        assert row.close == normalize_decimal(Decimal("43000.00000000"))
+
+    def test_real_change_in_quote_asset_volume_produces_update(self, repo, alembic_session):
+        t0 = 1_900_200_000_000
+        repo.upsert_batch([_large_decimal_kline(t0)])
+        alembic_session.commit()
+
+        changed = KlineData(
+            symbol="BTCUSDT",
+            interval="15m",
+            open_time=t0,
+            open=Decimal("42150.32000000"),
+            high=Decimal("42300.00000000"),
+            low=Decimal("42100.00000000"),
+            close=Decimal("42200.50000000"),
+            volume=Decimal("1253.48700000"),
+            close_time=t0 + 900_000 - 1,
+            quote_asset_volume=Decimal("10999999.99999999"),  # real change
+            number_of_trades=8742,
+            taker_buy_base_volume=Decimal("651.23400000"),
+            taker_buy_quote_volume=Decimal("27481234.87654321"),
+        )
+        result = repo.upsert_batch([changed])
+        alembic_session.commit()
+
+        assert result.updated == 1
+
+    def test_batch_288_identical_candles_all_ignored(self, repo, alembic_session):
+        """Simulate the real-world two consecutive downloads of 288 BTCUSDT 15m candles."""
+        t0 = 1_900_300_000_000
+        klines = [_large_decimal_kline(t0 + i * 900_000) for i in range(288)]
+
+        repo.upsert_batch(klines)
+        alembic_session.commit()
+
+        result = repo.upsert_batch(klines)
+        alembic_session.commit()
+
+        assert result.inserted == 0
+        assert result.updated == 0
+        assert result.ignored == 288
+
+    def test_created_at_difference_does_not_cause_update(self, repo, alembic_session):
+        """created_at is an internal timestamp — it must never drive update detection."""
+        t0 = 1_900_400_000_000
+        repo.upsert_batch([_large_decimal_kline(t0)])
+        alembic_session.commit()
+
+        row = alembic_session.query(Candle).filter_by(open_time=t0).one()
+        original_created_at = row.created_at
+
+        result = repo.upsert_batch([_large_decimal_kline(t0)])
+        alembic_session.commit()
+
+        assert result.ignored == 1
+        assert result.updated == 0
+
+        row2 = alembic_session.query(Candle).filter_by(open_time=t0).one()
+        assert row2.created_at == original_created_at
+
+    def test_fresh_session_read_back_returns_exact_decimal(self, tmp_path, alembic_session):
+        """After commit, open a brand-new session and verify exact Decimal values."""
+        t0 = 1_900_500_000_000
+        klines = [_large_decimal_kline(t0)]
+        repo = CandleRepository(alembic_session)
+        repo.upsert_batch(klines)
+        alembic_session.commit()
+
+        # Expire all objects so the next access hits the DB
+        alembic_session.expire_all()
+        row = alembic_session.query(Candle).filter_by(open_time=t0).one()
+
+        assert type(row.open) is Decimal
+        assert type(row.quote_asset_volume) is Decimal
+        assert row.quote_asset_volume == normalize_decimal(Decimal("10753491.66553520"))
+        assert row.taker_buy_quote_volume == normalize_decimal(Decimal("27481234.87654321"))
+
+    def test_upsert_inserts_exact_decimal_values(self, repo, alembic_session):
+        t0 = 1_900_600_000_000
+        klines = [_large_decimal_kline(t0)]
+        result = repo.upsert_batch(klines)
+        alembic_session.commit()
+
+        assert result.inserted == 1
+        assert result.updated == 0
+
+        row = alembic_session.query(Candle).filter_by(open_time=t0).one()
+        assert row.quote_asset_volume == normalize_decimal(Decimal("10753491.66553520"))
+
+    def test_all_decimal_fields_are_decimal_type_after_upsert(self, repo, alembic_session):
+        t0 = 1_900_700_000_000
+        repo.upsert_batch([_large_decimal_kline(t0)])
+        alembic_session.commit()
+        alembic_session.expire_all()
+
+        row = alembic_session.query(Candle).filter_by(open_time=t0).one()
+        for field in (
+            "open",
+            "high",
+            "low",
+            "close",
+            "volume",
+            "quote_asset_volume",
+            "taker_buy_base_volume",
+            "taker_buy_quote_volume",
+        ):
+            val = getattr(row, field)
+            assert (
+                type(val) is Decimal
+            ), f"Column {field!r} should be Decimal after reload, got {type(val)}"
+
+    def test_idempotency_pragma_confirms_varchar_storage(self, tmp_path):
+        """PRAGMA table_info confirms candle decimal columns have VARCHAR/TEXT affinity."""
+        db_url = f"sqlite:///{tmp_path}/idempotency_pragma.db"
+        cfg = Config("alembic.ini")
+        cfg.set_main_option("sqlalchemy.url", db_url)
+        command.upgrade(cfg, "head")
+
+        engine = create_engine(db_url)
+        with engine.connect() as conn:
+            cols = conn.execute(text("PRAGMA table_info(candles)")).fetchall()
+        col_map = {row[1]: row[2] for row in cols}
+        for col in ("open", "quote_asset_volume", "taker_buy_quote_volume"):
+            assert (
+                "VARCHAR" in col_map[col].upper()
+            ), f"Column {col!r} must be VARCHAR for exact TEXT storage, got {col_map[col]!r}"
         engine.dispose()

@@ -97,7 +97,7 @@ class TestNoShortSelling:
             "sma_short",
             "EMA-short",
             "SMA-short",
-            "never",   # "never opening a short", "never generates short-sell"
+            "never",  # "never opening a short", "never generates short-sell"
             "Spot-only",
             "short-sell",  # appears in "no short-sell signals" documentation
         )
@@ -106,9 +106,7 @@ class TestNoShortSelling:
                 continue
             if any(allowed in line for allowed in _ALLOWED):
                 continue
-            raise AssertionError(
-                f"Found potential short-selling reference: {line.strip()!r}"
-            )
+            raise AssertionError(f"Found potential short-selling reference: {line.strip()!r}")
 
     def test_strategy_action_has_no_short_enum(self):
         from app.strategy.schemas import StrategyAction
