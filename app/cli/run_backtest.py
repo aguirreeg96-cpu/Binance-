@@ -25,6 +25,7 @@ from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
     from app.backtesting.diagnostics import BacktestDiagnostics
+    from app.backtesting.variants import ComparisonReport
 
 logging.basicConfig(
     level=logging.INFO,
@@ -100,6 +101,22 @@ def _build_parser() -> argparse.ArgumentParser:
             "Exports additional CSV and JSON files when --export-dir is set."
         ),
     )
+    p.add_argument(
+        "--strategy-version",
+        choices=["v1", "v2"],
+        default="v1",
+        help="Strategy version to run: v1 (bearish-crossover only) or v2 (risk-based exits).",
+    )
+    p.add_argument(
+        "--compare-strategy-variants",
+        action="store_true",
+        help=(
+            "Run all four controlled variants (V1_BASELINE, V2_STOP_ONLY, "
+            "V2_STOP_TP, V2_STOP_TP_TIME) and print a comparison table. "
+            "Exports strategy_variants.csv/.json, v2_trades.csv, "
+            "exit_type_breakdown.csv when --export-dir is set."
+        ),
+    )
     return p
 
 
@@ -138,10 +155,25 @@ def main() -> None:
     db = SessionLocal()
     try:
         svc = BacktestService(db)
-        if args.diagnostics:
+
+        if args.compare_strategy_variants:
+            # ---- Variant comparison mode ----
+            report = svc.run_variants(config)
+            result = report.variants[0].result  # V1_BASELINE for the standard summary
+            all_candles = []  # type: list
+            warmup_len = 0
+            strategy_engine = None
+            ind_config = None
+        elif args.diagnostics:
             result, all_candles, warmup_len, strategy_engine, ind_config = svc.run_with_context(
                 config
             )
+        elif args.strategy_version == "v2":
+            result = svc.run_v2(config)
+            all_candles = []
+            warmup_len = 0
+            strategy_engine = None
+            ind_config = None
         else:
             result = svc.run(config)
             all_candles = []
@@ -157,6 +189,39 @@ def main() -> None:
         sys.exit(1)
     finally:
         db.close()
+
+    # Print comparison table if requested
+    if args.compare_strategy_variants:
+        _print_comparison(report)
+        if args.export_dir:
+            from app.backtesting.v2_exporters import (
+                export_exit_type_breakdown_csv,
+                export_v2_trades_csv,
+                export_variant_comparison_csv,
+                export_variant_comparison_json,
+            )
+
+            export_path = Path(args.export_dir)
+            export_path.mkdir(parents=True, exist_ok=True)
+            slug = f"{config.symbol}_{config.interval}_{args.start[:10]}_{args.end[:10]}"
+
+            variants_json = export_path / f"{slug}_strategy_variants.json"
+            variants_csv = export_path / f"{slug}_strategy_variants.csv"
+            v2_trades_csv = export_path / f"{slug}_v2_trades.csv"
+            exit_csv = export_path / f"{slug}_exit_type_breakdown.csv"
+
+            export_variant_comparison_json(report, variants_json)
+            export_variant_comparison_csv(report, variants_csv)
+            export_v2_trades_csv(report, v2_trades_csv)
+            export_exit_type_breakdown_csv(report, exit_csv)
+
+            print("\nVariant exports:")
+            print(f"  Variants JSON : {variants_json}")
+            print(f"  Variants CSV  : {variants_csv}")
+            print(f"  V2 trades CSV : {v2_trades_csv}")
+            print(f"  Exit types CSV: {exit_csv}")
+        print(_WARNING)
+        return
 
     # Print summary
     r = result
@@ -252,6 +317,69 @@ def main() -> None:
     print(_WARNING)
 
 
+def _print_comparison(report: "ComparisonReport") -> None:
+    """Print a human-readable strategy variant comparison table."""
+    sep = "=" * 72
+    print(f"\n{sep}")
+    print("  STRATEGY VARIANT COMPARISON  (PAPER/TEST only)")
+    print(sep)
+    print(f"  Buy & Hold benchmark : {report.bah_return_pct:.4f}%")
+    print()
+
+    hdr = (
+        f"  {'Variant':<22} {'Return':>9} {'NoCost':>9} "
+        f"{'Trades':>7} {'WinRate':>8} {'MaxDD':>8} {'Fees':>8}"
+    )
+    print(hdr)
+    print(f"  {'-' * 70}")
+
+    for v in report.variants:
+        r = v.result
+        nc = v.result_no_costs
+        wr = f"{r.win_rate_pct:.1f}%" if r.win_rate_pct is not None else "N/A"
+        print(
+            f"  {v.name:<22} "
+            f"{r.total_return_pct:>8.4f}% "
+            f"{nc.total_return_pct:>8.4f}% "
+            f"{r.total_trades:>7} "
+            f"{wr:>8} "
+            f"{r.max_drawdown_pct:>7.4f}% "
+            f"{r.total_fees:>8.2f}"
+        )
+
+    print(f"\n  {'-' * 70}")
+    print("  Exit type breakdown:")
+    hdr2 = (
+        f"  {'Variant':<22} {'SL':>5} {'TP':>5} {'Time':>5} {'Cross':>6} {'Ambig':>6} {'Force':>6}"
+    )
+    print(hdr2)
+    print(f"  {'-' * 70}")
+    for v in report.variants:
+        print(
+            f"  {v.name:<22} "
+            f"{v.sl_exits:>5} "
+            f"{v.tp_exits:>5} "
+            f"{v.timed_exits:>5} "
+            f"{v.crossover_exits:>6} "
+            f"{v.ambiguous_exits:>6} "
+            f"{v.forced_exits:>6}"
+        )
+
+    print(f"\n  {'-' * 70}")
+    print("  Duration & distribution:")
+    hdr3 = f"  {'Variant':<22} {'AvgDur(c)':>10} {'MedianPnL':>12} {'ProfFact':>10}"
+    print(hdr3)
+    print(f"  {'-' * 70}")
+    for v in report.variants:
+        r = v.result
+        avg_dur = f"{v.avg_duration_candles:.1f}" if v.avg_duration_candles is not None else "N/A"
+        med_pnl = f"{v.median_net_pnl:.2f}" if v.median_net_pnl is not None else "N/A"
+        pf = f"{r.profit_factor:.4f}" if r.profit_factor is not None else "N/A"
+        print(f"  {v.name:<22} {avg_dur:>10} {med_pnl:>12} {pf:>10}")
+
+    print(sep)
+
+
 def _print_diagnostics(diag: "BacktestDiagnostics") -> None:
     """Print a human-readable diagnostic summary."""
     b = diag.benchmark
@@ -299,8 +427,7 @@ def _print_diagnostics(diag: "BacktestDiagnostics") -> None:
     for m in diag.monthly_breakdown:
         wr = f"{m.win_rate_pct:.1f}%" if m.win_rate_pct is not None else "N/A"
         print(
-            f"  {m.year}-{m.month:02d}  trades={m.trade_count:>3}  "
-            f"net_pnl={m.net_pnl:.2f}  wr={wr}"
+            f"  {m.year}-{m.month:02d}  trades={m.trade_count:>3}  net_pnl={m.net_pnl:.2f}  wr={wr}"
         )
 
     print("\n--- Trade Distribution ---")
@@ -322,12 +449,10 @@ def _print_diagnostics(diag: "BacktestDiagnostics") -> None:
 
     print(f"  Warmup incomplete    : {eb.warmup_incomplete:>6}  ({_pct(eb.warmup_incomplete)})")
     print(
-        f"  No bullish crossover : {eb.no_bullish_crossover:>6}  "
-        f"({_pct(eb.no_bullish_crossover)})"
+        f"  No bullish crossover : {eb.no_bullish_crossover:>6}  ({_pct(eb.no_bullish_crossover)})"
     )
     print(
-        f"  Price below long EMA : {eb.price_below_long_ema:>6}  "
-        f"({_pct(eb.price_below_long_ema)})"
+        f"  Price below long EMA : {eb.price_below_long_ema:>6}  ({_pct(eb.price_below_long_ema)})"
     )
     print(
         f"  RSI outside buy range: {eb.rsi_outside_buy_range:>6}  "

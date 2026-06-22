@@ -232,9 +232,9 @@ class TestGetIndicatorsComplete:
             "atr",
             "volume_sma",
         ):
-            assert isinstance(
-                item[field], str
-            ), f"Field {field!r} should be str, got {type(item[field])}"
+            assert isinstance(item[field], str), (
+                f"Field {field!r} should be str, got {type(item[field])}"
+            )
 
     def test_iso_timestamps_present(self, api_client):
         resp = api_client.get("/api/v1/indicators", params=self._small_params())
@@ -267,9 +267,9 @@ class TestGetIndicatorsComplete:
         resp = api_client.get("/api/v1/indicators", params=self._small_params())
         item = resp.json()[0]
         for forbidden in ("signal", "buy", "sell", "wait", "action", "recommendation"):
-            assert (
-                forbidden not in item
-            ), f"Field {forbidden!r} must not appear in indicator response"
+            assert forbidden not in item, (
+                f"Field {forbidden!r} must not appear in indicator response"
+            )
 
 
 # ---------------------------------------------------------------------------

@@ -40,7 +40,7 @@ class StrategyEngineConfig(BaseModel):
     def _validate(self) -> "StrategyEngineConfig":
         if self.buy_rsi_min >= self.buy_rsi_max:
             raise ValueError(
-                f"buy_rsi_min ({self.buy_rsi_min}) must be " f"< buy_rsi_max ({self.buy_rsi_max})"
+                f"buy_rsi_min ({self.buy_rsi_min}) must be < buy_rsi_max ({self.buy_rsi_max})"
             )
         for name, val in [
             ("buy_rsi_min", self.buy_rsi_min),

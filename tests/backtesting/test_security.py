@@ -46,9 +46,9 @@ class TestNoRealMarketClient:
     def test_no_module_imports_binance_client(self):
         for path in _BACKTESTING_FILES:
             src = _source(path)
-            assert (
-                "BinanceMarketDataClient" not in src
-            ), f"BinanceMarketDataClient imported in {path}"
+            assert "BinanceMarketDataClient" not in src, (
+                f"BinanceMarketDataClient imported in {path}"
+            )
 
 
 class TestNoApiKeys:

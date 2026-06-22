@@ -38,6 +38,14 @@ class ReasonCode(StrEnum):
     BUY_CONDITIONS_MET = "BUY_CONDITIONS_MET"
     SELL_CONDITIONS_MET = "SELL_CONDITIONS_MET"
 
+    # V2 risk-based exit codes
+    ATR_STOP_LOSS = "ATR_STOP_LOSS"
+    RISK_REWARD_TAKE_PROFIT = "RISK_REWARD_TAKE_PROFIT"
+    TRAILING_STOP = "TRAILING_STOP"
+    MAX_HOLDING_TIME = "MAX_HOLDING_TIME"
+    AMBIGUOUS_INTRABAR_STOP_FIRST = "AMBIGUOUS_INTRABAR_STOP_FIRST"
+    FORCED_END_OF_BACKTEST = "FORCED_END_OF_BACKTEST"
+
 
 # Human-readable descriptions for logging / UI
 REASON_DESCRIPTIONS: dict[ReasonCode, str] = {
@@ -57,4 +65,12 @@ REASON_DESCRIPTIONS: dict[ReasonCode, str] = {
     ReasonCode.NO_POSITION_TO_CLOSE: "No open position to close; SELL skipped.",
     ReasonCode.BUY_CONDITIONS_MET: "All configured BUY conditions were satisfied.",
     ReasonCode.SELL_CONDITIONS_MET: "At least one configured SELL condition was satisfied.",
+    ReasonCode.ATR_STOP_LOSS: "Price hit the ATR-based stop-loss level (intrabar).",
+    ReasonCode.RISK_REWARD_TAKE_PROFIT: "Price hit the fixed take-profit level (intrabar).",
+    ReasonCode.TRAILING_STOP: "Price hit the trailing stop level (intrabar).",
+    ReasonCode.MAX_HOLDING_TIME: "Position closed after reaching maximum holding candles.",
+    ReasonCode.AMBIGUOUS_INTRABAR_STOP_FIRST: (
+        "Both SL and TP hit in same candle; conservative SL-first policy applied."
+    ),
+    ReasonCode.FORCED_END_OF_BACKTEST: "Position force-closed at end of backtest period.",
 }
