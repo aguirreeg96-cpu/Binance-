@@ -39,6 +39,10 @@ class BacktestTrade:
     is_forced_close: bool  # True when closed by force_close_at_end
     capital_at_entry: Decimal  # quote capital committed to this trade
 
+    # Reason codes captured from strategy decision (empty tuple if unavailable)
+    entry_reasons: tuple[str, ...] = ()
+    exit_reasons: tuple[str, ...] = ()
+
 
 @dataclass(frozen=True)
 class EquityPoint:

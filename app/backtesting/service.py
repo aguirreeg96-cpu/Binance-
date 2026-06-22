@@ -13,6 +13,7 @@ from app.backtesting.engine import BacktestEngine
 from app.backtesting.exceptions import BacktestInsufficientDataError
 from app.backtesting.schemas import BacktestResult
 from app.indicators.schemas import IndicatorConfig
+from app.models.candle import Candle
 from app.repositories.candle_repository import CandleRepository
 from app.strategy.config import StrategyEngineConfig
 from app.strategy.engine import StrategyEngine
@@ -30,16 +31,16 @@ class BacktestService:
     def __init__(self, db: Session) -> None:
         self.db = db
 
-    def run(
+    def run_with_context(
         self,
         config: BacktestConfig,
         indicator_config: IndicatorConfig | None = None,
         strategy_config: StrategyEngineConfig | None = None,
-    ) -> BacktestResult:
-        """Run a backtest and return the result.
+    ) -> tuple[BacktestResult, list[Candle], int, StrategyEngine, IndicatorConfig]:
+        """Run a backtest and return both result and diagnostic context.
 
-        Fetches candles from the DB (with warmup prefix), runs the engine,
-        and returns a BacktestResult.  The result is not persisted.
+        Returns (result, all_candles, warmup_len, strategy_engine, indicator_config).
+        Pass these directly to compute_diagnostics() for extended analysis.
         """
         ind_config = indicator_config or IndicatorConfig()
         strat_config = strategy_config or StrategyEngineConfig()
@@ -71,9 +72,25 @@ class BacktestService:
             warmup_len,
         )
 
+        strategy_engine = StrategyEngine(strat_config)
         engine = BacktestEngine(
             config=config,
-            strategy_engine=StrategyEngine(strat_config),
+            strategy_engine=strategy_engine,
             indicator_config=ind_config,
         )
-        return engine.run(all_candles, warmup_len)
+        result = engine.run(all_candles, warmup_len)
+        return result, all_candles, warmup_len, strategy_engine, ind_config
+
+    def run(
+        self,
+        config: BacktestConfig,
+        indicator_config: IndicatorConfig | None = None,
+        strategy_config: StrategyEngineConfig | None = None,
+    ) -> BacktestResult:
+        """Run a backtest and return the result.
+
+        Fetches candles from the DB (with warmup prefix), runs the engine,
+        and returns a BacktestResult.  The result is not persisted.
+        """
+        result, _, _, _, _ = self.run_with_context(config, indicator_config, strategy_config)
+        return result

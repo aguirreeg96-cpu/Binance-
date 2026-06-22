@@ -26,6 +26,7 @@ class _OpenPosition:
     fee: Decimal  # entry fee paid (quote)
     quantity: Decimal  # base asset held
     capital_committed: Decimal  # quote capital used to open this position
+    entry_reasons: tuple[str, ...] = ()  # reason codes from the BUY decision
 
 
 @dataclass

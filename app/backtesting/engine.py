@@ -98,6 +98,7 @@ class BacktestEngine:
 
         pending_action: StrategyAction | None = None
         pending_signal_time: int | None = None
+        pending_reasons: tuple[str, ...] = ()
 
         for i, (candle, result) in enumerate(zip(eval_candles, eval_results, strict=False)):
             is_last = i == len(eval_candles) - 1
@@ -105,12 +106,17 @@ class BacktestEngine:
             # ---- Execute pending signal at THIS candle's OPEN ----
             if pending_action is not None and pending_signal_time is not None:
                 if pending_action == StrategyAction.BUY and portfolio.open_position is None:
-                    _execute_buy(portfolio, candle, self.config, pending_signal_time)
+                    _execute_buy(
+                        portfolio, candle, self.config, pending_signal_time, pending_reasons
+                    )
                 elif pending_action == StrategyAction.SELL and portfolio.open_position is not None:
-                    trade = _execute_sell(portfolio, candle, self.config, pending_signal_time)
+                    trade = _execute_sell(
+                        portfolio, candle, self.config, pending_signal_time, pending_reasons
+                    )
                     completed_trades.append(trade)
                 pending_action = None
                 pending_signal_time = None
+                pending_reasons = ()
 
             # ---- Update candle counters ----
             portfolio.total_candles_evaluated += 1
@@ -134,6 +140,7 @@ class BacktestEngine:
             if not is_last and decision.action in (StrategyAction.BUY, StrategyAction.SELL):
                 pending_action = decision.action
                 pending_signal_time = candle.open_time
+                pending_reasons = tuple(str(r) for r in decision.reasons)
 
         bah_return = buy_and_hold_return_pct(
             initial_capital=self.config.initial_capital,
@@ -167,6 +174,7 @@ def _execute_buy(
     candle: Candle,
     config: BacktestConfig,
     signal_time: int,
+    entry_reasons: tuple[str, ...] = (),
 ) -> None:
     """Open a long position at this candle's open with adverse slippage.
 
@@ -186,6 +194,7 @@ def _execute_buy(
         fee=fee,
         quantity=quantity,
         capital_committed=capital,
+        entry_reasons=entry_reasons,
     )
 
 
@@ -194,6 +203,7 @@ def _execute_sell(
     candle: Candle,
     config: BacktestConfig,
     signal_time: int,
+    exit_reasons: tuple[str, ...] = (),
 ) -> BacktestTrade:
     """Close the long position at this candle's open with adverse slippage.
 
@@ -224,6 +234,8 @@ def _execute_sell(
         return_pct=return_pct,
         is_forced_close=False,
         capital_at_entry=pos.capital_committed,
+        entry_reasons=pos.entry_reasons,
+        exit_reasons=exit_reasons,
     )
 
     portfolio.quote_balance = net_proceeds
@@ -270,6 +282,8 @@ def _execute_forced_close(
         return_pct=return_pct,
         is_forced_close=True,
         capital_at_entry=pos.capital_committed,
+        entry_reasons=pos.entry_reasons,
+        exit_reasons=("FORCED_CLOSE",),
     )
 
     portfolio.quote_balance = net_proceeds
