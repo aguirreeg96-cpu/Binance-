@@ -25,6 +25,7 @@ from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
     from app.backtesting.diagnostics import BacktestDiagnostics
+    from app.backtesting.normalized_comparison import MultiPeriodReport
     from app.backtesting.variants import ComparisonReport
 
 logging.basicConfig(
@@ -117,6 +118,16 @@ def _build_parser() -> argparse.ArgumentParser:
             "exit_type_breakdown.csv when --export-dir is set."
         ),
     )
+    p.add_argument(
+        "--normalized-comparison",
+        action="store_true",
+        help=(
+            "Run all 4 variants at 25%%, 50%% and 100%% allocation for 2023 and 2024 "
+            "to produce a fair normalized comparison matrix. "
+            "Exports normalized_strategy_comparison.csv/.json and "
+            "yearly_strategy_comparison.csv when --export-dir is set."
+        ),
+    )
     return p
 
 
@@ -156,7 +167,62 @@ def main() -> None:
     try:
         svc = BacktestService(db)
 
-        if args.compare_strategy_variants:
+        if args.normalized_comparison:
+            # ---- Normalized multi-period comparison mode ----
+
+            _MS_2023_START = int(datetime(2023, 1, 1, tzinfo=UTC).timestamp() * 1000)
+            _MS_2024_START = int(datetime(2024, 1, 1, tzinfo=UTC).timestamp() * 1000)
+            _MS_2025_START = int(datetime(2025, 1, 1, tzinfo=UTC).timestamp() * 1000)
+            cfg_2023 = BacktestConfig(
+                symbol=args.symbol,
+                interval=args.interval,
+                start_ms=_MS_2023_START,
+                end_ms=_MS_2024_START,
+                initial_capital=initial_capital,
+                fee_percentage=fee_pct,
+                slippage_percentage=slip_pct,
+                force_close_at_end=not args.no_force_close,
+            )
+            cfg_2024 = BacktestConfig(
+                symbol=args.symbol,
+                interval=args.interval,
+                start_ms=_MS_2024_START,
+                end_ms=_MS_2025_START,
+                initial_capital=initial_capital,
+                fee_percentage=fee_pct,
+                slippage_percentage=slip_pct,
+                force_close_at_end=not args.no_force_close,
+            )
+            multi_report = svc.run_multi_period_comparison(cfg_2023, cfg_2024)
+            _print_normalized_comparison(multi_report)
+            if args.export_dir:
+                from app.backtesting.normalized_exporters import (
+                    export_normalized_comparison_csv,
+                    export_normalized_comparison_json,
+                    export_yearly_comparison_csv,
+                )
+
+                export_path = Path(args.export_dir)
+                export_path.mkdir(parents=True, exist_ok=True)
+                slug = f"{args.symbol}_{args.interval}_2023_2024"
+
+                nc_csv = export_path / f"{slug}_normalized_strategy_comparison.csv"
+                nc_json = export_path / f"{slug}_normalized_strategy_comparison.json"
+                yr_csv = export_path / f"{slug}_yearly_strategy_comparison.csv"
+
+                # Export 2024 matrix as the primary period CSV/JSON
+                export_normalized_comparison_csv(multi_report.period_2024, nc_csv)
+                export_normalized_comparison_json(multi_report.period_2024, nc_json)
+                export_yearly_comparison_csv(multi_report, yr_csv)
+
+                print("\nNormalized exports:")
+                print(f"  Normalized CSV  : {nc_csv}")
+                print(f"  Normalized JSON : {nc_json}")
+                print(f"  Yearly CSV      : {yr_csv}")
+            print(_WARNING)
+            return
+
+        elif args.compare_strategy_variants:
             # ---- Variant comparison mode ----
             report = svc.run_variants(config)
             result = report.variants[0].result  # V1_BASELINE for the standard summary
@@ -462,6 +528,97 @@ def _print_diagnostics(diag: "BacktestDiagnostics") -> None:
     print(f"  Position already open: {eb.position_already_open:>6}")
     print(f"  Total evaluated      : {eb.total_evaluated:>6}")
     print(sep)
+
+
+def _print_normalized_comparison(multi_report: "MultiPeriodReport") -> None:
+    """Print normalized strategy comparison matrix and multi-year summary."""
+    sep = "=" * 80
+
+    for period_report in (multi_report.period_2023, multi_report.period_2024):
+        label = period_report.period_label
+        print(f"\n{sep}")
+        print(f"  NORMALIZED COMPARISON {label}  (PAPER/TEST only)")
+        print(sep)
+        print(f"  Buy & Hold {label}: {period_report.bah_return_pct:.4f}%")
+        print()
+
+        # --- 25 % focused block ---
+        at25 = [r for r in period_report.matrix if r.allocation_pct == 25]
+        print("  ── All variants at 25 % allocation ──")
+        hdr = (
+            f"  {'Variant':<18} {'Return':>8} {'NoCost':>8} {'Equity':>10} "
+            f"{'MaxDD':>7} {'WinR':>6} {'Fees':>8} {'Trades':>7} {'Avg':>9} {'Exp':>6}"
+        )
+        print(hdr)
+        print(f"  {'-' * 78}")
+        for r in at25:
+            wr = f"{r.win_rate_pct:.1f}%" if r.win_rate_pct is not None else "N/A"
+            avg = f"{r.avg_trade_pnl:.2f}" if r.avg_trade_pnl is not None else "N/A"
+            print(
+                f"  {r.variant_name:<18} "
+                f"{r.return_pct:>7.4f}% "
+                f"{r.return_pct_no_costs:>7.4f}% "
+                f"{r.final_equity:>10.2f} "
+                f"{r.max_drawdown_pct:>6.4f}% "
+                f"{wr:>6} "
+                f"{r.total_fees:>8.2f} "
+                f"{r.total_trades:>7} "
+                f"{avg:>9} "
+                f"{r.exposure_pct:>5.1f}%"
+            )
+
+        # --- Full 12-row matrix ---
+        print()
+        print("  ── Full matrix (all variants × all allocations) ──")
+        hdr2 = (
+            f"  {'Variant':<18} {'Alloc':>6} {'Return':>8} {'NoCost':>8} "
+            f"{'Equity':>10} {'MaxDD':>7} {'ProfFact':>9} {'Fees':>8} {'Slippage':>9}"
+        )
+        print(hdr2)
+        print(f"  {'-' * 78}")
+        for r in period_report.matrix:
+            pf = f"{r.profit_factor:.4f}" if r.profit_factor is not None else "N/A"
+            print(
+                f"  {r.variant_name:<18} "
+                f"{r.allocation_pct:>5.0f}% "
+                f"{r.return_pct:>7.4f}% "
+                f"{r.return_pct_no_costs:>7.4f}% "
+                f"{r.final_equity:>10.2f} "
+                f"{r.max_drawdown_pct:>6.4f}% "
+                f"{pf:>9} "
+                f"{r.total_fees:>8.2f} "
+                f"{r.slippage_cost:>9.2f}"
+            )
+
+    # --- Multi-year summary ---
+    print(f"\n{sep}")
+    print("  MULTI-YEAR SUMMARY (2023 + 2024 combined, same parameters)")
+    print(sep)
+    hdr3 = (
+        f"  {'Variant':<18} {'Alloc':>6} {'2023%':>8} {'2024%':>8} "
+        f"{'Combined%':>10} {'PosYrs':>7} {'WrstDD':>7} {'PFStab':>8} "
+        f"{'Tr23':>5} {'Tr24':>5}"
+    )
+    print(hdr3)
+    print(f"  {'-' * 78}")
+    for s in multi_report.yearly_summary:
+        pf_stab = (
+            f"{s.profit_factor_stability:.4f}" if s.profit_factor_stability is not None else "N/A"
+        )
+        print(
+            f"  {s.variant_name:<18} "
+            f"{s.allocation_pct:>5.0f}% "
+            f"{s.return_pct_2023:>7.4f}% "
+            f"{s.return_pct_2024:>7.4f}% "
+            f"{s.combined_return_pct:>9.4f}% "
+            f"{s.positive_years:>7} "
+            f"{s.worst_drawdown_pct:>6.4f}% "
+            f"{pf_stab:>8} "
+            f"{s.trade_count_2023:>5} "
+            f"{s.trade_count_2024:>5}"
+        )
+    print(sep)
+    print("  No variant is declared optimal or expected to be profitable.")
 
 
 if __name__ == "__main__":
