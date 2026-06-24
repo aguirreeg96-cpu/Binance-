@@ -25,6 +25,7 @@ from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
     from app.backtesting.diagnostics import BacktestDiagnostics
+    from app.backtesting.entry_comparison import EntryMultiPeriodReport
     from app.backtesting.normalized_comparison import MultiPeriodReport
     from app.backtesting.variants import ComparisonReport
 
@@ -128,6 +129,15 @@ def _build_parser() -> argparse.ArgumentParser:
             "yearly_strategy_comparison.csv when --export-dir is set."
         ),
     )
+    p.add_argument(
+        "--compare-entry-variants",
+        action="store_true",
+        help=(
+            "Run 5 entry variants × 2 exit configs = 10 combos for 2023 and 2024 "
+            "with capital compounding to compare entry filter effectiveness. "
+            "2025 data is untouched. Exports 5 CSV/JSON files when --export-dir is set."
+        ),
+    )
     return p
 
 
@@ -167,7 +177,69 @@ def main() -> None:
     try:
         svc = BacktestService(db)
 
-        if args.normalized_comparison:
+        if args.compare_entry_variants:
+            # ---- Entry variant comparison mode ----
+
+            _MS_2023_START = int(datetime(2023, 1, 1, tzinfo=UTC).timestamp() * 1000)
+            _MS_2024_START = int(datetime(2024, 1, 1, tzinfo=UTC).timestamp() * 1000)
+            _MS_2025_START = int(datetime(2025, 1, 1, tzinfo=UTC).timestamp() * 1000)
+            cfg_entry_23 = BacktestConfig(
+                symbol=args.symbol,
+                interval=args.interval,
+                start_ms=_MS_2023_START,
+                end_ms=_MS_2024_START,
+                initial_capital=initial_capital,
+                fee_percentage=fee_pct,
+                slippage_percentage=slip_pct,
+                force_close_at_end=not args.no_force_close,
+            )
+            cfg_entry_24 = BacktestConfig(
+                symbol=args.symbol,
+                interval=args.interval,
+                start_ms=_MS_2024_START,
+                end_ms=_MS_2025_START,
+                initial_capital=initial_capital,
+                fee_percentage=fee_pct,
+                slippage_percentage=slip_pct,
+                force_close_at_end=not args.no_force_close,
+            )
+            entry_report = svc.run_entry_multi_period(cfg_entry_23, cfg_entry_24)
+            _print_entry_comparison(entry_report)
+            if args.export_dir:
+                from app.backtesting.entry_exporters import (
+                    export_entry_comparison_csv,
+                    export_entry_comparison_json,
+                    export_filter_analysis_csv,
+                    export_signal_counts_csv,
+                    export_yearly_entry_comparison_csv,
+                )
+
+                export_path = Path(args.export_dir)
+                export_path.mkdir(parents=True, exist_ok=True)
+                slug = f"{args.symbol}_{args.interval}_2023_2024"
+
+                ec_csv = export_path / f"{slug}_entry_comparison.csv"
+                ec_json = export_path / f"{slug}_entry_comparison.json"
+                yr_csv = export_path / f"{slug}_yearly_entry_comparison.csv"
+                fa_csv = export_path / f"{slug}_filter_analysis.csv"
+                sc_csv = export_path / f"{slug}_signal_counts.csv"
+
+                export_entry_comparison_csv(entry_report.period_2024, ec_csv)
+                export_entry_comparison_json(entry_report.period_2024, ec_json)
+                export_yearly_entry_comparison_csv(entry_report, yr_csv)
+                export_filter_analysis_csv(entry_report.period_2024, fa_csv)
+                export_signal_counts_csv(entry_report.period_2024, sc_csv)
+
+                print("\nEntry variant exports:")
+                print(f"  Comparison CSV   : {ec_csv}")
+                print(f"  Comparison JSON  : {ec_json}")
+                print(f"  Yearly CSV       : {yr_csv}")
+                print(f"  Filter analysis  : {fa_csv}")
+                print(f"  Signal counts    : {sc_csv}")
+            print(_WARNING)
+            return
+
+        elif args.normalized_comparison:
             # ---- Normalized multi-period comparison mode ----
 
             _MS_2023_START = int(datetime(2023, 1, 1, tzinfo=UTC).timestamp() * 1000)
@@ -619,6 +691,74 @@ def _print_normalized_comparison(multi_report: "MultiPeriodReport") -> None:
         )
     print(sep)
     print("  No variant is declared optimal or expected to be profitable.")
+
+
+def _print_entry_comparison(multi_report: "EntryMultiPeriodReport") -> None:
+    """Print entry variant comparison table and multi-year summary."""
+    sep = "=" * 84
+
+    for period_report in (multi_report.period_2023, multi_report.period_2024):
+        label = period_report.period_label
+        print(f"\n{sep}")
+        print(f"  ENTRY VARIANT COMPARISON {label}  (PAPER/TEST only — 25 % allocation)")
+        print(sep)
+        print(f"  Buy & Hold {label}: {period_report.bah_return_pct:.4f}%")
+
+        for exit_name in ("V2_STOP_ONLY", "V2_STOP_TP"):
+            combos = [c for c in period_report.combinations if c.exit_config_name == exit_name]
+            print(f"\n  ── Exit config: {exit_name} ──")
+            hdr = (
+                f"  {'Entry Variant':<28} {'Return':>8} {'NoCost':>8} "
+                f"{'Equity':>10} {'MaxDD':>7} {'Trades':>7} {'Sigs':>5} "
+                f"{'Blkd':>5} {'Elim':>5}"
+            )
+            print(hdr)
+            print(f"  {'-' * 82}")
+            for c in combos:
+                r = c.result
+                sc = c.signal_counts
+                fa = c.filter_analysis
+                print(
+                    f"  {c.entry_variant:<28} "
+                    f"{r.total_return_pct:>7.4f}% "
+                    f"{c.result_nc.total_return_pct:>7.4f}% "
+                    f"{r.final_equity:>10.2f} "
+                    f"{r.max_drawdown_pct:>6.4f}% "
+                    f"{r.total_trades:>7} "
+                    f"{sc.signals_detected:>5} "
+                    f"{sc.blocked_by_filter:>5} "
+                    f"{fa.entries_eliminated:>5}"
+                )
+
+    # Multi-year summary
+    print(f"\n{sep}")
+    print("  MULTI-YEAR SUMMARY  (capital compounding: 2023 final → 2024 initial)")
+    print(sep)
+    for exit_name in ("V2_STOP_ONLY", "V2_STOP_TP"):
+        rows = [s for s in multi_report.yearly_summary if s.exit_config_name == exit_name]
+        print(f"\n  ── Exit config: {exit_name} ──")
+        hdr3 = (
+            f"  {'Entry Variant':<28} {'2023%':>8} {'2024%':>8} "
+            f"{'Combined%':>10} {'Cap23End':>10} {'Cap24End':>10} "
+            f"{'PosYrs':>7} {'WrstDD':>7} {'Tr23':>5} {'Tr24':>5}"
+        )
+        print(hdr3)
+        print(f"  {'-' * 82}")
+        for s in rows:
+            print(
+                f"  {s.entry_variant:<28} "
+                f"{s.return_pct_2023:>7.4f}% "
+                f"{s.return_pct_2024:>7.4f}% "
+                f"{s.combined_return_pct:>9.4f}% "
+                f"{s.capital_2023_end:>10.2f} "
+                f"{s.capital_2024_end:>10.2f} "
+                f"{s.positive_years:>7} "
+                f"{s.worst_drawdown_pct:>6.4f}% "
+                f"{s.total_trades_2023:>5} "
+                f"{s.total_trades_2024:>5}"
+            )
+    print(sep)
+    print("  No entry variant is declared optimal or expected to be profitable.")
 
 
 if __name__ == "__main__":

@@ -3,11 +3,11 @@
 from decimal import Decimal
 
 import pytest
+from alembic.config import Config
 from sqlalchemy import create_engine, inspect, text
 from sqlalchemy.orm import sessionmaker
 
 from alembic import command
-from alembic.config import Config
 from app.market_data.kline_parser import KlineData
 from app.models.candle import Candle
 from app.models.types import normalize_decimal

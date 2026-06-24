@@ -20,6 +20,7 @@ from app.strategy.config import StrategyEngineConfig
 from app.strategy.engine import StrategyEngine
 
 if TYPE_CHECKING:
+    from app.backtesting.entry_comparison import EntryComparisonReport, EntryMultiPeriodReport
     from app.backtesting.normalized_comparison import MultiPeriodReport, NormalizedComparisonReport
     from app.backtesting.risk_exit_config import RiskExitConfig
     from app.backtesting.variants import ComparisonReport
@@ -322,6 +323,130 @@ class BacktestService:
         )
 
         return _run_mp(
+            candles_2023=all_candles_23,
+            warmup_2023=warmup_23,
+            config_2023=config_2023,
+            candles_2024=all_candles_24,
+            warmup_2024=warmup_24,
+            config_2024=config_2024,
+            indicator_config=ind_config,
+            strategy_config=strat_config,
+        )
+
+    def run_entry_comparison(
+        self,
+        config: BacktestConfig,
+        indicator_config: IndicatorConfig | None = None,
+        strategy_config: StrategyEngineConfig | None = None,
+        period_label: str = "",
+    ) -> "EntryComparisonReport":
+        """Run all 10 entry-variant × exit-config combinations for one period.
+
+        Fetches candles from DB, runs each combo twice (with/without costs).
+        PAPER/TEST only — no real orders, no real capital at risk.
+        """
+        from app.backtesting.entry_comparison import (
+            run_entry_comparison as _run_ec,
+        )
+
+        ind_config = indicator_config or IndicatorConfig()
+        strat_config = strategy_config or StrategyEngineConfig()
+        warmup_count = ind_config.warmup_candles
+        repo = CandleRepository(self.db)
+
+        all_candles, warmup_len = repo.query_for_indicators(
+            symbol=config.symbol,
+            interval=config.interval,
+            warmup_count=warmup_count,
+            start_ms=config.start_ms,
+            end_ms=config.end_ms,
+        )
+
+        eval_candles = all_candles[warmup_len:]
+        if not eval_candles:
+            raise BacktestInsufficientDataError(
+                f"No candles found for {config.symbol} {config.interval} "
+                f"in range [{config.start_ms}, {config.end_ms}). "
+                "Download historical data first using the CLI."
+            )
+
+        label = period_label or "?"
+        logger.info(
+            "Entry comparison %s %s [%s]: %d eval + %d warmup candles",
+            config.symbol,
+            config.interval,
+            label,
+            len(eval_candles),
+            warmup_len,
+        )
+
+        return _run_ec(
+            all_candles=all_candles,
+            warmup_len=warmup_len,
+            config=config,
+            indicator_config=ind_config,
+            strategy_config=strat_config,
+            period_label=period_label,
+        )
+
+    def run_entry_multi_period(
+        self,
+        config_2023: BacktestConfig,
+        config_2024: BacktestConfig,
+        indicator_config: IndicatorConfig | None = None,
+        strategy_config: StrategyEngineConfig | None = None,
+    ) -> "EntryMultiPeriodReport":
+        """Run entry variant comparison for 2023 and 2024 with capital compounding.
+
+        2023 final equity is carried forward as 2024 initial capital per combo.
+        PAPER/TEST only — no real orders, no real capital at risk.
+        """
+        from app.backtesting.entry_comparison import (
+            run_entry_multi_period as _run_emp,
+        )
+
+        ind_config = indicator_config or IndicatorConfig()
+        strat_config = strategy_config or StrategyEngineConfig()
+        warmup_count = ind_config.warmup_candles
+        repo = CandleRepository(self.db)
+
+        all_candles_23, warmup_23 = repo.query_for_indicators(
+            symbol=config_2023.symbol,
+            interval=config_2023.interval,
+            warmup_count=warmup_count,
+            start_ms=config_2023.start_ms,
+            end_ms=config_2023.end_ms,
+        )
+        eval_23 = all_candles_23[warmup_23:]
+        if not eval_23:
+            raise BacktestInsufficientDataError(
+                f"No 2023 candles for {config_2023.symbol} {config_2023.interval}. "
+                "Download historical data first using the CLI."
+            )
+
+        all_candles_24, warmup_24 = repo.query_for_indicators(
+            symbol=config_2024.symbol,
+            interval=config_2024.interval,
+            warmup_count=warmup_count,
+            start_ms=config_2024.start_ms,
+            end_ms=config_2024.end_ms,
+        )
+        eval_24 = all_candles_24[warmup_24:]
+        if not eval_24:
+            raise BacktestInsufficientDataError(
+                f"No 2024 candles for {config_2024.symbol} {config_2024.interval}. "
+                "Download historical data first using the CLI."
+            )
+
+        logger.info(
+            "Entry multi-period %s %s: 2023=%d candles, 2024=%d candles",
+            config_2023.symbol,
+            config_2023.interval,
+            len(eval_23),
+            len(eval_24),
+        )
+
+        return _run_emp(
             candles_2023=all_candles_23,
             warmup_2023=warmup_23,
             config_2023=config_2023,

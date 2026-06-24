@@ -1,7 +1,7 @@
 """Custom SQLAlchemy column types."""
 
 from decimal import ROUND_HALF_EVEN, Decimal
-from typing import Any, Optional
+from typing import Any
 
 from sqlalchemy import Numeric, String
 from sqlalchemy.engine import Dialect
@@ -60,7 +60,7 @@ class ExactDecimal(TypeDecorator[Decimal]):
             return dialect.type_descriptor(String(50))
         return dialect.type_descriptor(Numeric(30, 10))
 
-    def process_bind_param(self, value: Optional[Decimal], dialect: Dialect) -> Any:
+    def process_bind_param(self, value: Decimal | None, dialect: Dialect) -> Any:
         if value is None:
             return None
         if isinstance(value, float):
@@ -74,7 +74,7 @@ class ExactDecimal(TypeDecorator[Decimal]):
             return format(normalized, "f")  # fixed-point; no 'E' notation
         return normalized  # pass Decimal to Numeric's bind processor on other dialects
 
-    def process_result_value(self, value: Optional[Any], dialect: Dialect) -> Optional[Decimal]:
+    def process_result_value(self, value: Any | None, dialect: Dialect) -> Decimal | None:
         if value is None:
             return None
         if isinstance(value, Decimal):
