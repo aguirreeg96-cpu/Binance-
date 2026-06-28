@@ -695,7 +695,7 @@ def _print_normalized_comparison(multi_report: "MultiPeriodReport") -> None:
 
 def _print_entry_comparison(multi_report: "EntryMultiPeriodReport") -> None:
     """Print entry variant comparison table and multi-year summary."""
-    sep = "=" * 100
+    sep = "=" * 110
 
     for period_report in (multi_report.period_2023, multi_report.period_2024):
         label = period_report.period_label
@@ -713,27 +713,28 @@ def _print_entry_comparison(multi_report: "EntryMultiPeriodReport") -> None:
             print(f"\n  ── Exit config: {exit_name} ──")
             hdr = (
                 f"  {'Entry Variant':<26} {'Ret%':>8} {'NoCost%':>8} "
-                f"{'StdAlone$':>10} {'MaxDD%':>7} {'Tr':>4} "
-                f"{'Base':>5} {'Pass':>5} {'Rej':>5} {'Blkd':>5} {'Elim':>5}"
+                f"{'StdAlone$':>10} {'MaxDD%':>7} "
+                f"{'Base':>5} {'Pass':>5} {'Rej':>4} {'PosBlk':>6} {'NoNext':>6} "
+                f"{'Buys':>5} {'Trades':>6}"
             )
             print(hdr)
-            print(f"  {'-' * 98}")
+            print(f"  {'-' * 108}")
             for c in combos:
                 r = c.result
                 sc = c.signal_counts
-                fa = c.filter_analysis
                 print(
                     f"  {c.entry_variant:<26} "
                     f"{r.total_return_pct:>7.4f}% "
                     f"{c.result_nc.total_return_pct:>7.4f}% "
                     f"{c.standalone_final_equity:>10.2f} "
                     f"{r.max_drawdown_pct:>6.4f}% "
-                    f"{r.total_trades:>4} "
                     f"{sc.baseline_buy_candidates:>5} "
                     f"{sc.filter_passed_candidates:>5} "
-                    f"{sc.filter_rejected_candidates:>5} "
-                    f"{sc.blocked_by_open_position:>5} "
-                    f"{fa.trades_eliminated:>5}"
+                    f"{sc.filter_rejected_candidates:>4} "
+                    f"{sc.blocked_by_open_position:>6} "
+                    f"{sc.passed_without_next_candle:>6} "
+                    f"{sc.executed_buys:>5} "
+                    f"{r.total_trades:>6}"
                 )
 
     # Multi-year summary (compounded equity)
@@ -749,7 +750,7 @@ def _print_entry_comparison(multi_report: "EntryMultiPeriodReport") -> None:
             f"{'SA23End':>9} {'SA24End':>9} {'WrstDD%':>8} {'Tr23':>5} {'Tr24':>5}"
         )
         print(hdr3)
-        print(f"  {'-' * 98}")
+        print(f"  {'-' * 108}")
         for s in rows:
             print(
                 f"  {s.entry_variant:<26} "

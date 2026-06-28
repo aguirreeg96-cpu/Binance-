@@ -1,4 +1,4 @@
-"""Stage 5.2B.1 — Audited entry variant comparison.
+"""Stage 5.2B.2 — Filter-execution integration fix.
 
 Runs 7 entry variants × 2 exit configurations = 14 combinations, all at 25 %
 capital allocation.
@@ -129,8 +129,11 @@ class SignalCounts:
 
     Invariants (enforced by _FilteredStrategyEngine):
       filter_passed_candidates + filter_rejected_candidates = baseline_buy_candidates
-      executed_buys + blocked_by_open_position           = filter_passed_candidates
+      executed_buys + blocked_by_open_position + passed_without_next_candle
+        = filter_passed_candidates
 
+    passed_without_next_candle is always 0 with V2BacktestEngine because signals are only
+    generated for non-last candles; it is included for invariant completeness.
     PAPER/TEST only.
     """
 
@@ -139,6 +142,7 @@ class SignalCounts:
     filter_rejected_candidates: int  # baseline candidates blocked by the entry filter
     executed_buys: int  # signals that resulted in a trade = result.total_trades
     blocked_by_open_position: int  # filter-passed signals skipped (position already open)
+    passed_without_next_candle: int = 0  # filter-passed at last candle; always 0 in V2
 
 
 @dataclass(frozen=True)
@@ -194,6 +198,11 @@ class EntryVariantResult:
     crossover_exits: int
     median_net_pnl: Decimal | None
     avg_trade_pnl: Decimal | None
+    # Candidate signal timestamps (open_time of the BUY signal candle)
+    baseline_candidate_ids: list[int]  # all V1 BUY candidate timestamps
+    passed_candidate_ids: list[int]  # subset that passed the entry filter
+    rejected_candidate_ids: list[int]  # subset rejected by the filter
+    executed_buy_ids: list[int]  # entry_signal_time of actual trades
 
 
 @dataclass(frozen=True)
@@ -301,23 +310,35 @@ class _FilteredStrategyEngine(StrategyEngine):
         self._htf_bars = htf_bars
         self._idx_by_time: dict[int, int] = {r.open_time: i for i, r in enumerate(all_results)}
 
-        # Signal pipeline counters (incremented during evaluate())
+        # Signal pipeline counters and ID lists (populated during evaluate())
         self.baseline_buy_candidates: int = 0
         self.filter_passed_candidates: int = 0
         self.filter_rejected_candidates: int = 0
         self.blocked_by_open_position: int = 0
+        # open_time timestamps for each pipeline bucket
+        self.baseline_candidate_ids: list[int] = []
+        self.passed_candidate_ids: list[int] = []
+        self.rejected_candidate_ids: list[int] = []
 
     def evaluate(
         self,
         result: IndicatorResult,
         position: PositionContext | None = None,
     ) -> StrategyDecision:
-        # Always check the base engine WITHOUT position context to count candidates.
-        # StrategyEngine is stateless; calling twice with different position args is safe.
+        # V2BacktestEngine always passes PositionContext(has_open_long_position=False/True),
+        # never None.  Check .has_open_long_position — not just "is not None" — to determine
+        # whether a position is actually open.  Using "position is not None" here was the
+        # Stage 5.2B bug: every rejected BUY fell through to the unfiltered base engine and
+        # was executed as if no filter existed.
+        position_is_open = position is not None and position.has_open_long_position
+
+        # Evaluate base engine without position context to count BUY candidates.
+        # StrategyEngine is stateless; calling twice with different args is safe.
         candidate = self._filter_base.evaluate(result, position=None)
 
         if candidate.action == StrategyAction.BUY:
             self.baseline_buy_candidates += 1
+            self.baseline_candidate_ids.append(result.open_time)
             idx = self._idx_by_time.get(result.open_time, -1)
             filter_ok = idx >= 0 and passes_entry_filter(
                 idx, self._all_results, self._entry_filter, self._htf_bars
@@ -325,20 +346,21 @@ class _FilteredStrategyEngine(StrategyEngine):
 
             if filter_ok:
                 self.filter_passed_candidates += 1
-                if position is not None:
-                    # Position is open: signal is blocked by open position.
-                    # Delegate to the real position-aware evaluation for SELL/WAIT handling.
+                self.passed_candidate_ids.append(result.open_time)
+                if position_is_open:
+                    # Signal passes filter but position is already open → blocked.
                     self.blocked_by_open_position += 1
                     return self._filter_base.evaluate(result, position)
-                # No open position: execute the BUY.
+                # No open position: allow the BUY.
                 return candidate
 
             # Filter rejected this signal.
             self.filter_rejected_candidates += 1
-            if position is not None:
-                # Delegate for SELL/WAIT handling.
+            self.rejected_candidate_ids.append(result.open_time)
+            if position_is_open:
+                # Position open: still need to check for SELL signals.
                 return self._filter_base.evaluate(result, position)
-            # No position and filter blocked: return WAIT.
+            # No position and filter rejected: suppress the BUY entirely.
             return StrategyDecision(
                 action=StrategyAction.WAIT,
                 symbol=candidate.symbol,
@@ -352,7 +374,7 @@ class _FilteredStrategyEngine(StrategyEngine):
                 failed_conditions=candidate.failed_conditions,
                 indicators_snapshot=candidate.indicators_snapshot,
                 warmup_complete=candidate.warmup_complete,
-                has_open_position=candidate.has_open_position,
+                has_open_position=False,
                 generated_at=candidate.generated_at,
             )
 
@@ -532,6 +554,13 @@ def _build_variant_result(
 
     standalone_final = standalone_initial * (Decimal("1") + result.total_return_pct / _HUNDRED)
 
+    trade_ids = _trade_identifiers(trades, result.config)
+    executed_buy_ids = [ti.signal_timestamp for ti in trade_ids]
+    passed_without_next = max(
+        0,
+        fengine.filter_passed_candidates - result.total_trades - fengine.blocked_by_open_position,
+    )
+
     return EntryVariantResult(
         entry_variant=variant_name,
         exit_config_name=exit_name,
@@ -545,16 +574,21 @@ def _build_variant_result(
             filter_rejected_candidates=fengine.filter_rejected_candidates,
             executed_buys=result.total_trades,
             blocked_by_open_position=fengine.blocked_by_open_position,
+            passed_without_next_candle=passed_without_next,
         ),
         filter_analysis=_compute_filter_analysis(
             fengine, baseline_result.trades, trades, baseline_result, result
         ),
-        trade_identifiers=_trade_identifiers(trades, result.config),
+        trade_identifiers=trade_ids,
         sl_exits=_count_exit(trades, str(ReasonCode.ATR_STOP_LOSS)),
         tp_exits=_count_exit(trades, str(ReasonCode.RISK_REWARD_TAKE_PROFIT)),
         crossover_exits=_count_exit(trades, str(ReasonCode.BEARISH_CROSSOVER)),
         median_net_pnl=_median_net_pnl(trades),
         avg_trade_pnl=avg_pnl,
+        baseline_candidate_ids=list(fengine.baseline_candidate_ids),
+        passed_candidate_ids=list(fengine.passed_candidate_ids),
+        rejected_candidate_ids=list(fengine.rejected_candidate_ids),
+        executed_buy_ids=executed_buy_ids,
     )
 
 

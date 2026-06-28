@@ -1,4 +1,4 @@
-"""Tests for Stage 5.2B.1 — Audited entry variant comparison.
+"""Tests for Stage 5.2B.1/5.2B.2 — Audited entry variant comparison + filter-execution fix.
 
 Covers:
   - EntryFilterType.V1_BASELINE: always passes
@@ -981,9 +981,9 @@ class TestCapitalCompounding:
         report = self._run_multi()
         _HUNDRED = Decimal("100")
         for s in report.yearly_summary:
-            assert s.compounded_final_2023 == s.compounded_initial_2024, (
-                f"{s.entry_variant}: compounded_final_2023 != compounded_initial_2024"
-            )
+            assert (
+                s.compounded_final_2023 == s.compounded_initial_2024
+            ), f"{s.entry_variant}: compounded_final_2023 != compounded_initial_2024"
             expected_24 = s.compounded_initial_2024 * (Decimal("1") + s.return_pct_2024 / _HUNDRED)
             assert abs(s.compounded_final_2024 - expected_24) < Decimal("0.0001")
 
@@ -1137,8 +1137,332 @@ class TestEntryExporters:
         export_filter_analysis_csv(report, path)
         rows = list(csv.DictReader(path.open()))
         assert "invariant_passed_plus_rejected_eq_baseline" in rows[0]
-        assert "invariant_executed_plus_blocked_eq_passed" in rows[0]
+        assert "invariant_executed_plus_blocked_plus_no_next_eq_passed" in rows[0]
         # All invariants should be True
         for row in rows:
             assert row["invariant_passed_plus_rejected_eq_baseline"] == "True"
-            assert row["invariant_executed_plus_blocked_eq_passed"] == "True"
+            assert row["invariant_executed_plus_blocked_plus_no_next_eq_passed"] == "True"
+
+
+# ---------------------------------------------------------------------------
+# Stage 5.2B.2 — Filter-execution integration tests
+# ---------------------------------------------------------------------------
+
+
+class TestFilterExecutionCorrectness:
+    """Verify that a rejected BUY signal is never executed, never queued, never creates a trade.
+
+    Uses _FilteredStrategyEngine directly with AlwaysBuyEngine as the base and a V4 filter
+    with an impossible threshold (100%) so every signal is rejected.
+    PAPER/TEST only.
+    """
+
+    def _run_filtered(
+        self,
+        n: int = 30,
+        sep_pct: str = "100",
+        fee_pct: str = "0.1",
+    ):
+        from app.backtesting.entry_comparison import (
+            _RISK_STOP_ONLY,
+            _FilteredStrategyEngine,
+        )
+        from app.backtesting.v2_engine import V2BacktestEngine
+        from app.indicators.calculator import IndicatorCalculator
+        from app.strategy.config import StrategyEngineConfig
+        from tests.backtesting.conftest import AlwaysBuyEngine
+
+        candles = _candles_15m(n)
+        all_results = IndicatorCalculator(_ind_config()).calculate(candles)
+        warmup = _ind_config().warmup_candles
+
+        base = AlwaysBuyEngine(StrategyEngineConfig())
+        filter_cfg = EntryFilterConfig(
+            filter_type=EntryFilterType.V4_CROSSOVER_STRENGTH,
+            ema_separation_min_pct=_D(sep_pct),
+        )
+        fengine = _FilteredStrategyEngine(base, all_results, filter_cfg, None)
+
+        config = _cfg(n_candles=n, fee_percentage=fee_pct)
+        v2 = V2BacktestEngine(
+            config=config,
+            risk_exit_config=_RISK_STOP_ONLY,
+            strategy_engine=fengine,
+            indicator_config=_ind_config(),
+        )
+        return v2.run(candles, warmup), fengine, config
+
+    def test_all_rejected_filter_produces_zero_trades(self):
+        result, _, _ = self._run_filtered()
+        assert result.total_trades == 0
+
+    def test_all_rejected_filter_produces_zero_fees(self):
+        result, _, _ = self._run_filtered(fee_pct="0.1")
+        assert result.total_fees == _D("0")
+
+    def test_all_rejected_filter_keeps_initial_equity(self):
+        result, _, config = self._run_filtered()
+        assert result.final_equity == config.initial_capital
+
+    def test_zero_pass_variant_has_no_drawdown(self):
+        result, _, _ = self._run_filtered()
+        assert result.total_trades == 0
+        assert result.total_fees == _D("0")
+        assert result.max_drawdown_pct == _D("0")
+
+    def test_baseline_buy_candidates_nonzero_when_rejected(self):
+        """AlwaysBuyEngine produces BUY candidates even though the filter rejects them all."""
+        _, fengine, _ = self._run_filtered(n=30)
+        assert fengine.baseline_buy_candidates > 0
+
+    def test_rejected_equals_baseline_when_all_rejected(self):
+        _, fengine, _ = self._run_filtered()
+        assert fengine.filter_rejected_candidates == fengine.baseline_buy_candidates
+        assert fengine.filter_passed_candidates == 0
+
+    def test_baseline_pass_through_produces_trades(self):
+        """V1_BASELINE filter passes all signals → at least 1 trade with AlwaysBuyEngine."""
+        from app.backtesting.entry_comparison import (
+            _RISK_STOP_ONLY,
+            _FilteredStrategyEngine,
+        )
+        from app.backtesting.v2_engine import V2BacktestEngine
+        from app.indicators.calculator import IndicatorCalculator
+        from app.strategy.config import StrategyEngineConfig
+        from tests.backtesting.conftest import AlwaysBuyEngine
+
+        n = 30
+        candles = _candles_15m(n)
+        all_results = IndicatorCalculator(_ind_config()).calculate(candles)
+        warmup = _ind_config().warmup_candles
+
+        base = AlwaysBuyEngine(StrategyEngineConfig())
+        filter_cfg = EntryFilterConfig(filter_type=EntryFilterType.V1_BASELINE)
+        fengine = _FilteredStrategyEngine(base, all_results, filter_cfg, None)
+
+        config = _cfg(n_candles=n, fee_percentage="0")
+        v2 = V2BacktestEngine(
+            config=config,
+            risk_exit_config=_RISK_STOP_ONLY,
+            strategy_engine=fengine,
+            indicator_config=_ind_config(),
+        )
+        result = v2.run(candles, warmup)
+        assert result.total_trades >= 1
+
+
+# ---------------------------------------------------------------------------
+# _FilteredStrategyEngine unit tests
+# ---------------------------------------------------------------------------
+
+
+class TestFilteredEngineUnit:
+    """Direct unit tests for _FilteredStrategyEngine.evaluate() call-by-call."""
+
+    def _results(self, n: int = 30) -> list[IndicatorResult]:
+        from app.indicators.calculator import IndicatorCalculator
+
+        return IndicatorCalculator(_ind_config()).calculate(_candles_15m(n))
+
+    def test_returns_wait_when_rejected_no_position(self):
+        from app.backtesting.entry_comparison import _FilteredStrategyEngine
+        from app.strategy.config import StrategyEngineConfig
+        from app.strategy.schemas import PositionContext, StrategyAction
+        from tests.backtesting.conftest import AlwaysBuyEngine
+
+        all_results = self._results()
+        base = AlwaysBuyEngine(StrategyEngineConfig())
+        filter_cfg = EntryFilterConfig(
+            filter_type=EntryFilterType.V4_CROSSOVER_STRENGTH,
+            ema_separation_min_pct=_D("100"),
+        )
+        fengine = _FilteredStrategyEngine(base, all_results, filter_cfg, None)
+        pos_no = PositionContext(has_open_long_position=False)
+
+        warmup_results = [r for r in all_results if r.warmup_complete]
+        assert warmup_results, "need at least one warmup-complete candle"
+        for r in warmup_results:
+            decision = fengine.evaluate(r, pos_no)
+            assert decision.action == StrategyAction.WAIT
+
+    def test_returns_buy_when_passed_no_position(self):
+        from app.backtesting.entry_comparison import _FilteredStrategyEngine
+        from app.strategy.config import StrategyEngineConfig
+        from app.strategy.schemas import PositionContext, StrategyAction
+        from tests.backtesting.conftest import AlwaysBuyEngine
+
+        all_results = self._results()
+        base = AlwaysBuyEngine(StrategyEngineConfig())
+        filter_cfg = EntryFilterConfig(filter_type=EntryFilterType.V1_BASELINE)
+        fengine = _FilteredStrategyEngine(base, all_results, filter_cfg, None)
+        pos_no = PositionContext(has_open_long_position=False)
+
+        decisions = [fengine.evaluate(r, pos_no) for r in all_results if r.warmup_complete]
+        assert any(d.action == StrategyAction.BUY for d in decisions)
+
+    def test_sell_passes_through_when_position_open(self):
+        from app.backtesting.entry_comparison import _FilteredStrategyEngine
+        from app.strategy.config import StrategyEngineConfig
+        from app.strategy.schemas import PositionContext, StrategyAction
+        from tests.backtesting.conftest import AlwaysSellEngine
+
+        all_results = self._results()
+        sell_base = AlwaysSellEngine(StrategyEngineConfig())
+        filter_cfg = EntryFilterConfig(
+            filter_type=EntryFilterType.V4_CROSSOVER_STRENGTH,
+            ema_separation_min_pct=_D("100"),
+        )
+        fengine = _FilteredStrategyEngine(sell_base, all_results, filter_cfg, None)
+        pos_open = PositionContext(has_open_long_position=True)
+
+        warmup_results = [r for r in all_results if r.warmup_complete]
+        assert warmup_results
+        for r in warmup_results:
+            decision = fengine.evaluate(r, pos_open)
+            assert decision.action == StrategyAction.SELL
+
+
+# ---------------------------------------------------------------------------
+# Candidate ID list tests
+# ---------------------------------------------------------------------------
+
+
+class TestCandidateIds:
+    def _run(self, n: int = 60) -> EntryComparisonReport:
+        candles = _candles_15m(n)
+        warmup = _ind_config().warmup_candles
+        return run_entry_comparison(
+            all_candles=candles,
+            warmup_len=warmup,
+            config=_cfg(n_candles=n),
+            indicator_config=_ind_config(),
+        )
+
+    def test_executed_buy_ids_subset_of_baseline_candidate_ids(self):
+        report = self._run()
+        for c in report.combinations:
+            base_set = set(c.baseline_candidate_ids)
+            exec_set = set(c.executed_buy_ids)
+            assert exec_set.issubset(base_set), (
+                f"{c.entry_variant}/{c.exit_config_name}: "
+                "executed_buy_ids not a subset of baseline_candidate_ids"
+            )
+
+    def test_passed_union_rejected_ids_equals_base_ids(self):
+        report = self._run()
+        for c in report.combinations:
+            combined = set(c.passed_candidate_ids) | set(c.rejected_candidate_ids)
+            base_set = set(c.baseline_candidate_ids)
+            assert combined == base_set
+
+    def test_rejected_ids_disjoint_from_passed_ids(self):
+        report = self._run()
+        for c in report.combinations:
+            assert set(c.passed_candidate_ids).isdisjoint(set(c.rejected_candidate_ids))
+
+    def test_id_list_lengths_match_signal_counts(self):
+        report = self._run()
+        for c in report.combinations:
+            sc = c.signal_counts
+            assert len(c.baseline_candidate_ids) == sc.baseline_buy_candidates
+            assert len(c.passed_candidate_ids) == sc.filter_passed_candidates
+            assert len(c.rejected_candidate_ids) == sc.filter_rejected_candidates
+            assert len(c.executed_buy_ids) == sc.executed_buys
+
+
+# ---------------------------------------------------------------------------
+# Extended signal-count invariants (Stage 5.2B.2)
+# ---------------------------------------------------------------------------
+
+
+class TestExtendedInvariants:
+    def _run(self, n: int = 60) -> EntryComparisonReport:
+        candles = _candles_15m(n)
+        warmup = _ind_config().warmup_candles
+        return run_entry_comparison(
+            all_candles=candles,
+            warmup_len=warmup,
+            config=_cfg(n_candles=n),
+            indicator_config=_ind_config(),
+        )
+
+    def test_passed_plus_rejected_equals_baseline(self):
+        report = self._run()
+        for c in report.combinations:
+            sc = c.signal_counts
+            assert (
+                sc.filter_passed_candidates + sc.filter_rejected_candidates
+                == sc.baseline_buy_candidates
+            )
+
+    def test_executed_plus_blocked_plus_no_next_equals_passed(self):
+        """Extended invariant: executed + blocked_by_open + passed_without_next = passed."""
+        report = self._run()
+        for c in report.combinations:
+            sc = c.signal_counts
+            assert (
+                sc.executed_buys + sc.blocked_by_open_position + sc.passed_without_next_candle
+                == sc.filter_passed_candidates
+            ), (
+                f"{c.entry_variant}/{c.exit_config_name}: "
+                f"{sc.executed_buys} + {sc.blocked_by_open_position} + "
+                f"{sc.passed_without_next_candle} != {sc.filter_passed_candidates}"
+            )
+
+    def test_passed_without_next_candle_is_always_zero(self):
+        """V2BacktestEngine never evaluates the last candle → always 0."""
+        report = self._run()
+        for c in report.combinations:
+            assert c.signal_counts.passed_without_next_candle == 0
+
+    def test_v1_baseline_has_empty_rejected_ids(self):
+        report = self._run()
+        for c in report.combinations:
+            if c.entry_variant == "ENTRY_V1_BASELINE":
+                assert c.rejected_candidate_ids == []
+                assert len(c.passed_candidate_ids) == len(c.baseline_candidate_ids)
+
+
+# ---------------------------------------------------------------------------
+# Determinism — candidate IDs and filter effect on trade timestamps
+# ---------------------------------------------------------------------------
+
+
+class TestDeterminismExtended:
+    def test_deterministic_rerun_candidate_ids(self):
+        """Same inputs → identical candidate ID lists on repeated runs."""
+        candles = _candles_15m(60)
+        warmup = _ind_config().warmup_candles
+        cfg = _cfg(n_candles=60)
+        ind = _ind_config()
+
+        r1 = run_entry_comparison(candles, warmup, cfg, ind)
+        r2 = run_entry_comparison(candles, warmup, cfg, ind)
+
+        for c1, c2 in zip(r1.combinations, r2.combinations, strict=True):
+            assert c1.baseline_candidate_ids == c2.baseline_candidate_ids
+            assert c1.passed_candidate_ids == c2.passed_candidate_ids
+            assert c1.executed_buy_ids == c2.executed_buy_ids
+
+    def test_v4_separation_010_has_leq_trades_than_v1(self):
+        """Stricter filter → fewer or equal executed trades vs V1_BASELINE."""
+        candles = _candles_15m(60)
+        warmup = _ind_config().warmup_candles
+        cfg = _cfg(n_candles=60)
+        ind = _ind_config()
+
+        report = run_entry_comparison(candles, warmup, cfg, ind)
+        for exit_name in EXIT_CONFIG_NAMES:
+            v1 = next(
+                c
+                for c in report.combinations
+                if c.entry_variant == "ENTRY_V1_BASELINE" and c.exit_config_name == exit_name
+            )
+            v4_010 = next(
+                c
+                for c in report.combinations
+                if c.entry_variant == "ENTRY_V4_SEPARATION_010" and c.exit_config_name == exit_name
+            )
+            assert len(v4_010.executed_buy_ids) <= len(
+                v1.executed_buy_ids
+            ), f"exit={exit_name}: V4_010 has more executed trades than V1"

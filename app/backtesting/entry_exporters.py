@@ -63,6 +63,12 @@ def _combo_row(r: "EntryVariantResult") -> dict[str, Any]:
         "filter_rejected_candidates": sc.filter_rejected_candidates,
         "executed_buys": sc.executed_buys,
         "blocked_by_open_position": sc.blocked_by_open_position,
+        "passed_without_next_candle": sc.passed_without_next_candle,
+        # Candidate signal ID lists (pipe-separated open_time milliseconds)
+        "baseline_candidate_ids": "|".join(str(x) for x in r.baseline_candidate_ids),
+        "passed_candidate_ids": "|".join(str(x) for x in r.passed_candidate_ids),
+        "rejected_candidate_ids": "|".join(str(x) for x in r.rejected_candidate_ids),
+        "executed_buy_ids": "|".join(str(x) for x in r.executed_buy_ids),
         # Filter analysis vs V1 baseline
         "trades_conserved": fa.trades_conserved,
         "trades_eliminated": fa.trades_eliminated,
@@ -170,6 +176,7 @@ def export_filter_analysis_csv(
                 "rejected_candidates": fa.rejected_candidates,
                 "executed_buys": fa.executed_buys,
                 "blocked_by_open_position": fa.blocked_by_open_position,
+                "passed_without_next_candle": sc.passed_without_next_candle,
                 "trades_conserved": fa.trades_conserved,
                 "trades_eliminated": fa.trades_eliminated,
                 "trades_added": fa.trades_added,
@@ -183,8 +190,9 @@ def export_filter_analysis_csv(
                     sc.filter_passed_candidates + sc.filter_rejected_candidates
                     == sc.baseline_buy_candidates
                 ),
-                "invariant_executed_plus_blocked_eq_passed": (
-                    sc.executed_buys + sc.blocked_by_open_position == sc.filter_passed_candidates
+                "invariant_executed_plus_blocked_plus_no_next_eq_passed": (
+                    sc.executed_buys + sc.blocked_by_open_position + sc.passed_without_next_candle
+                    == sc.filter_passed_candidates
                 ),
             }
         )
@@ -214,6 +222,7 @@ def export_signal_counts_csv(
                 "filter_rejected_candidates": sc.filter_rejected_candidates,
                 "executed_buys": sc.executed_buys,
                 "blocked_by_open_position": sc.blocked_by_open_position,
+                "passed_without_next_candle": sc.passed_without_next_candle,
             }
         )
     if not rows:
