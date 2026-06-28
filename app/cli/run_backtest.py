@@ -695,7 +695,7 @@ def _print_normalized_comparison(multi_report: "MultiPeriodReport") -> None:
 
 def _print_entry_comparison(multi_report: "EntryMultiPeriodReport") -> None:
     """Print entry variant comparison table and multi-year summary."""
-    sep = "=" * 84
+    sep = "=" * 100
 
     for period_report in (multi_report.period_2023, multi_report.period_2024):
         label = period_report.period_label
@@ -703,57 +703,64 @@ def _print_entry_comparison(multi_report: "EntryMultiPeriodReport") -> None:
         print(f"  ENTRY VARIANT COMPARISON {label}  (PAPER/TEST only — 25 % allocation)")
         print(sep)
         print(f"  Buy & Hold {label}: {period_report.bah_return_pct:.4f}%")
+        print(
+            "  Equity shown = standalone (initial 10 000 USDT per year); "
+            "signal counts shared across all variants (same V1 base engine)."
+        )
 
         for exit_name in ("V2_STOP_ONLY", "V2_STOP_TP"):
             combos = [c for c in period_report.combinations if c.exit_config_name == exit_name]
             print(f"\n  ── Exit config: {exit_name} ──")
             hdr = (
-                f"  {'Entry Variant':<28} {'Return':>8} {'NoCost':>8} "
-                f"{'Equity':>10} {'MaxDD':>7} {'Trades':>7} {'Sigs':>5} "
-                f"{'Blkd':>5} {'Elim':>5}"
+                f"  {'Entry Variant':<26} {'Ret%':>8} {'NoCost%':>8} "
+                f"{'StdAlone$':>10} {'MaxDD%':>7} {'Tr':>4} "
+                f"{'Base':>5} {'Pass':>5} {'Rej':>5} {'Blkd':>5} {'Elim':>5}"
             )
             print(hdr)
-            print(f"  {'-' * 82}")
+            print(f"  {'-' * 98}")
             for c in combos:
                 r = c.result
                 sc = c.signal_counts
                 fa = c.filter_analysis
                 print(
-                    f"  {c.entry_variant:<28} "
+                    f"  {c.entry_variant:<26} "
                     f"{r.total_return_pct:>7.4f}% "
                     f"{c.result_nc.total_return_pct:>7.4f}% "
-                    f"{r.final_equity:>10.2f} "
+                    f"{c.standalone_final_equity:>10.2f} "
                     f"{r.max_drawdown_pct:>6.4f}% "
-                    f"{r.total_trades:>7} "
-                    f"{sc.signals_detected:>5} "
-                    f"{sc.blocked_by_filter:>5} "
-                    f"{fa.entries_eliminated:>5}"
+                    f"{r.total_trades:>4} "
+                    f"{sc.baseline_buy_candidates:>5} "
+                    f"{sc.filter_passed_candidates:>5} "
+                    f"{sc.filter_rejected_candidates:>5} "
+                    f"{sc.blocked_by_open_position:>5} "
+                    f"{fa.trades_eliminated:>5}"
                 )
 
-    # Multi-year summary
+    # Multi-year summary (compounded equity)
     print(f"\n{sep}")
-    print("  MULTI-YEAR SUMMARY  (capital compounding: 2023 final → 2024 initial)")
+    print("  MULTI-YEAR SUMMARY  (compounded: 2023 final → 2024 initial | standalone: 10 000/yr)")
     print(sep)
     for exit_name in ("V2_STOP_ONLY", "V2_STOP_TP"):
         rows = [s for s in multi_report.yearly_summary if s.exit_config_name == exit_name]
         print(f"\n  ── Exit config: {exit_name} ──")
         hdr3 = (
-            f"  {'Entry Variant':<28} {'2023%':>8} {'2024%':>8} "
-            f"{'Combined%':>10} {'Cap23End':>10} {'Cap24End':>10} "
-            f"{'PosYrs':>7} {'WrstDD':>7} {'Tr23':>5} {'Tr24':>5}"
+            f"  {'Entry Variant':<26} {'2023%':>8} {'2024%':>8} "
+            f"{'Combined%':>10} {'Comp23End':>10} {'Comp24End':>10} "
+            f"{'SA23End':>9} {'SA24End':>9} {'WrstDD%':>8} {'Tr23':>5} {'Tr24':>5}"
         )
         print(hdr3)
-        print(f"  {'-' * 82}")
+        print(f"  {'-' * 98}")
         for s in rows:
             print(
-                f"  {s.entry_variant:<28} "
+                f"  {s.entry_variant:<26} "
                 f"{s.return_pct_2023:>7.4f}% "
                 f"{s.return_pct_2024:>7.4f}% "
                 f"{s.combined_return_pct:>9.4f}% "
-                f"{s.capital_2023_end:>10.2f} "
-                f"{s.capital_2024_end:>10.2f} "
-                f"{s.positive_years:>7} "
-                f"{s.worst_drawdown_pct:>6.4f}% "
+                f"{s.compounded_final_2023:>10.2f} "
+                f"{s.compounded_final_2024:>10.2f} "
+                f"{s.standalone_final_2023:>9.2f} "
+                f"{s.standalone_final_2024:>9.2f} "
+                f"{s.worst_drawdown_pct:>7.4f}% "
                 f"{s.total_trades_2023:>5} "
                 f"{s.total_trades_2024:>5}"
             )

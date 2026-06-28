@@ -1,7 +1,12 @@
-"""Entry variant comparison exporters.
+"""Entry variant comparison exporters (Stage 5.2B.1 — audited).
 
 Writes EntryComparisonReport and EntryMultiPeriodReport to CSV and JSON.
 All Decimal values serialized as strings to prevent precision loss.
+
+Equity conventions (see entry_comparison.py for full definitions):
+  standalone_*  — each year starts from the original initial_capital
+  compounded_*  — 2023 final equity → 2024 initial capital (per combo)
+
 PAPER/TEST only. Past results do NOT predict future performance.
 """
 
@@ -30,28 +35,40 @@ def _combo_row(r: "EntryVariantResult") -> dict[str, Any]:
     return {
         "entry_variant": r.entry_variant,
         "exit_config": r.exit_config_name,
+        # Returns
         "return_pct": str(r.result.total_return_pct),
         "return_pct_no_costs": str(r.result_nc.total_return_pct),
-        "final_equity": str(r.result.final_equity),
+        # Standalone equity (always uses original initial_capital)
+        "standalone_initial_capital": str(r.standalone_initial_capital),
+        "standalone_final_equity": str(r.standalone_final_equity),
+        # Actual result equity (may be compounded for 2024 in multi-period run)
+        "compounded_final_equity": str(r.result.final_equity),
+        # Risk metrics
         "max_drawdown_pct": str(r.result.max_drawdown_pct),
         "profit_factor": _d(r.result.profit_factor),
         "win_rate_pct": _d(r.result.win_rate_pct),
         "total_trades": r.result.total_trades,
         "total_fees": str(r.result.total_fees),
         "exposure_pct": str(r.result.exposure_pct),
+        # Exit breakdown
         "sl_exits": r.sl_exits,
         "tp_exits": r.tp_exits,
         "crossover_exits": r.crossover_exits,
+        # Trade-level statistics
         "median_net_pnl": _d(r.median_net_pnl),
         "avg_trade_pnl": _d(r.avg_trade_pnl),
-        "signals_detected": sc.signals_detected,
-        "buys_executed": sc.buys_executed,
-        "blocked_by_filter": sc.blocked_by_filter,
-        "entries_eliminated": fa.entries_eliminated,
-        "entries_added": fa.entries_added,
-        "eliminated_pnl": str(fa.eliminated_pnl),
-        "eliminated_winners": fa.eliminated_winners,
-        "eliminated_losers": fa.eliminated_losers,
+        # Signal pipeline counts
+        "baseline_buy_candidates": sc.baseline_buy_candidates,
+        "filter_passed_candidates": sc.filter_passed_candidates,
+        "filter_rejected_candidates": sc.filter_rejected_candidates,
+        "executed_buys": sc.executed_buys,
+        "blocked_by_open_position": sc.blocked_by_open_position,
+        # Filter analysis vs V1 baseline
+        "trades_conserved": fa.trades_conserved,
+        "trades_eliminated": fa.trades_eliminated,
+        "trades_added": fa.trades_added,
+        "pnl_conserved": str(fa.pnl_conserved),
+        "pnl_eliminated": str(fa.pnl_eliminated),
         "return_pct_vs_baseline": str(fa.return_pct_vs_baseline),
         "max_dd_vs_baseline": str(fa.max_dd_vs_baseline),
         "trade_count_vs_baseline": fa.trade_count_vs_baseline,
@@ -63,15 +80,30 @@ def _yearly_row(s: "EntryYearlySummary") -> dict[str, Any]:
     return {
         "entry_variant": s.entry_variant,
         "exit_config": s.exit_config_name,
+        # Per-year returns
         "return_pct_2023": str(s.return_pct_2023),
         "return_pct_2024": str(s.return_pct_2024),
         "combined_return_pct": str(s.combined_return_pct),
-        "capital_2023_end": str(s.capital_2023_end),
-        "capital_2024_end": str(s.capital_2024_end),
+        # Standalone equity (both years start from standalone_initial)
+        "standalone_initial": str(s.standalone_initial),
+        "standalone_final_2023": str(s.standalone_final_2023),
+        "standalone_final_2024": str(s.standalone_final_2024),
+        # Compounded equity (2023 final → 2024 initial)
+        "compounded_initial_2023": str(s.compounded_initial_2023),
+        "compounded_final_2023": str(s.compounded_final_2023),
+        "compounded_initial_2024": str(s.compounded_initial_2024),
+        "compounded_final_2024": str(s.compounded_final_2024),
+        # Summary stats
         "positive_years": s.positive_years,
         "worst_drawdown_pct": str(s.worst_drawdown_pct),
         "total_trades_2023": s.total_trades_2023,
         "total_trades_2024": s.total_trades_2024,
+        "win_rate_pct_2023": _d(s.win_rate_pct_2023),
+        "win_rate_pct_2024": _d(s.win_rate_pct_2024),
+        "profit_factor_2023": _d(s.profit_factor_2023),
+        "profit_factor_2024": _d(s.profit_factor_2024),
+        "total_fees_2023": str(s.total_fees_2023),
+        "total_fees_2024": str(s.total_fees_2024),
     }
 
 
@@ -79,7 +111,7 @@ def export_entry_comparison_csv(
     report: "EntryComparisonReport",
     path: Path,
 ) -> None:
-    """Write the 10-combo entry comparison matrix to CSV."""
+    """Write the 14-combo entry comparison matrix to CSV."""
     if not report.combinations:
         return
     fieldnames = list(_combo_row(report.combinations[0]).keys())
@@ -124,23 +156,36 @@ def export_filter_analysis_csv(
     report: "EntryComparisonReport",
     path: Path,
 ) -> None:
-    """Write filter analysis rows (entries_eliminated, eliminated_pnl, etc.) to CSV."""
+    """Write filter analysis rows to CSV (signal pipeline + trade-level comparison)."""
     rows: list[dict[str, Any]] = []
     for r in report.combinations:
         fa = r.filter_analysis
+        sc = r.signal_counts
         rows.append(
             {
                 "entry_variant": r.entry_variant,
                 "exit_config": r.exit_config_name,
-                "entries_eliminated": fa.entries_eliminated,
-                "entries_added": fa.entries_added,
-                "eliminated_pnl": str(fa.eliminated_pnl),
-                "eliminated_winners": fa.eliminated_winners,
-                "eliminated_losers": fa.eliminated_losers,
+                "baseline_candidates": fa.baseline_candidates,
+                "passed_candidates": fa.passed_candidates,
+                "rejected_candidates": fa.rejected_candidates,
+                "executed_buys": fa.executed_buys,
+                "blocked_by_open_position": fa.blocked_by_open_position,
+                "trades_conserved": fa.trades_conserved,
+                "trades_eliminated": fa.trades_eliminated,
+                "trades_added": fa.trades_added,
+                "pnl_conserved": str(fa.pnl_conserved),
+                "pnl_eliminated": str(fa.pnl_eliminated),
                 "return_pct_vs_baseline": str(fa.return_pct_vs_baseline),
                 "max_dd_vs_baseline": str(fa.max_dd_vs_baseline),
                 "trade_count_vs_baseline": fa.trade_count_vs_baseline,
                 "exposure_vs_baseline": str(fa.exposure_vs_baseline),
+                "invariant_passed_plus_rejected_eq_baseline": (
+                    sc.filter_passed_candidates + sc.filter_rejected_candidates
+                    == sc.baseline_buy_candidates
+                ),
+                "invariant_executed_plus_blocked_eq_passed": (
+                    sc.executed_buys + sc.blocked_by_open_position == sc.filter_passed_candidates
+                ),
             }
         )
     if not rows:
@@ -156,7 +201,7 @@ def export_signal_counts_csv(
     report: "EntryComparisonReport",
     path: Path,
 ) -> None:
-    """Write signal count statistics to CSV."""
+    """Write signal pipeline statistics to CSV."""
     rows: list[dict[str, Any]] = []
     for r in report.combinations:
         sc = r.signal_counts
@@ -164,9 +209,11 @@ def export_signal_counts_csv(
             {
                 "entry_variant": r.entry_variant,
                 "exit_config": r.exit_config_name,
-                "signals_detected": sc.signals_detected,
-                "buys_executed": sc.buys_executed,
-                "blocked_by_filter": sc.blocked_by_filter,
+                "baseline_buy_candidates": sc.baseline_buy_candidates,
+                "filter_passed_candidates": sc.filter_passed_candidates,
+                "filter_rejected_candidates": sc.filter_rejected_candidates,
+                "executed_buys": sc.executed_buys,
+                "blocked_by_open_position": sc.blocked_by_open_position,
             }
         )
     if not rows:
