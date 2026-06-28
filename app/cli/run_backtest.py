@@ -27,6 +27,7 @@ if TYPE_CHECKING:
     from app.backtesting.diagnostics import BacktestDiagnostics
     from app.backtesting.entry_comparison import EntryMultiPeriodReport
     from app.backtesting.normalized_comparison import MultiPeriodReport
+    from app.backtesting.timeframe_cost_comparison import TimeframeCostReport
     from app.backtesting.variants import ComparisonReport
 
 logging.basicConfig(
@@ -138,6 +139,19 @@ def _build_parser() -> argparse.ArgumentParser:
             "2025 data is untouched. Exports 5 CSV/JSON files when --export-dir is set."
         ),
     )
+    p.add_argument(
+        "--compare-timeframes-costs",
+        action="store_true",
+        help=(
+            "Stage 5.2C: run frozen ENTRY_V3_ALIGNED_TREND + V2_STOP_ONLY @ 25%% "
+            "across 3 timeframes (15m, 30m, 1h) and 4 cost scenarios (NO_COSTS, "
+            "BASE_COSTS, LOW_SLIPPAGE, CONSERVATIVE) for 2023 and 2024. "
+            "30m and 1h are built from local 15m candles — no new downloads. "
+            "Exports timeframe_cost_comparison.csv/.json, "
+            "yearly_timeframe_comparison.csv, cost_sensitivity.csv "
+            "when --export-dir is set."
+        ),
+    )
     return p
 
 
@@ -177,7 +191,65 @@ def main() -> None:
     try:
         svc = BacktestService(db)
 
-        if args.compare_entry_variants:
+        if args.compare_timeframes_costs:
+            # ---- Timeframe × cost robustness mode (Stage 5.2C) ----
+
+            _MS_2023_START = int(datetime(2023, 1, 1, tzinfo=UTC).timestamp() * 1000)
+            _MS_2024_START = int(datetime(2024, 1, 1, tzinfo=UTC).timestamp() * 1000)
+            _MS_2025_START = int(datetime(2025, 1, 1, tzinfo=UTC).timestamp() * 1000)
+            cfg_tc_23 = BacktestConfig(
+                symbol=args.symbol,
+                interval="15m",
+                start_ms=_MS_2023_START,
+                end_ms=_MS_2024_START,
+                initial_capital=initial_capital,
+                fee_percentage=fee_pct,
+                slippage_percentage=slip_pct,
+                force_close_at_end=not args.no_force_close,
+            )
+            cfg_tc_24 = BacktestConfig(
+                symbol=args.symbol,
+                interval="15m",
+                start_ms=_MS_2024_START,
+                end_ms=_MS_2025_START,
+                initial_capital=initial_capital,
+                fee_percentage=fee_pct,
+                slippage_percentage=slip_pct,
+                force_close_at_end=not args.no_force_close,
+            )
+            tc_report = svc.run_timeframe_cost_comparison(cfg_tc_23, cfg_tc_24)
+            _print_timeframe_cost_comparison(tc_report)
+            if args.export_dir:
+                from app.backtesting.timeframe_cost_exporters import (
+                    export_cost_sensitivity_csv,
+                    export_timeframe_cost_csv,
+                    export_timeframe_cost_json,
+                    export_yearly_timeframe_csv,
+                )
+
+                export_path = Path(args.export_dir)
+                export_path.mkdir(parents=True, exist_ok=True)
+                slug = f"{args.symbol}_15m_2023_2024"
+
+                tc_csv = export_path / f"{slug}_timeframe_cost_comparison.csv"
+                tc_json = export_path / f"{slug}_timeframe_cost_comparison.json"
+                yr_csv = export_path / f"{slug}_yearly_timeframe_comparison.csv"
+                cs_csv = export_path / f"{slug}_cost_sensitivity.csv"
+
+                export_timeframe_cost_csv(tc_report, tc_csv)
+                export_timeframe_cost_json(tc_report, tc_json)
+                export_yearly_timeframe_csv(tc_report, yr_csv)
+                export_cost_sensitivity_csv(tc_report, cs_csv)
+
+                print("\nTimeframe/cost exports:")
+                print(f"  Comparison CSV  : {tc_csv}")
+                print(f"  Comparison JSON : {tc_json}")
+                print(f"  Yearly CSV      : {yr_csv}")
+                print(f"  Sensitivity CSV : {cs_csv}")
+            print(_WARNING)
+            return
+
+        elif args.compare_entry_variants:
             # ---- Entry variant comparison mode ----
 
             _MS_2023_START = int(datetime(2023, 1, 1, tzinfo=UTC).timestamp() * 1000)
@@ -767,6 +839,111 @@ def _print_entry_comparison(multi_report: "EntryMultiPeriodReport") -> None:
             )
     print(sep)
     print("  No entry variant is declared optimal or expected to be profitable.")
+
+
+def _print_timeframe_cost_comparison(report: "TimeframeCostReport") -> None:
+    """Print timeframe × cost scenario robustness comparison table."""
+    from app.backtesting.timeframe_cost_comparison import COST_SCENARIO_NAMES, TIMEFRAMES
+
+    sep = "=" * 105
+    print(f"\n{sep}")
+    print(
+        "  TIMEFRAME × COST ROBUSTNESS  " "(frozen: ENTRY_V3_ALIGNED_TREND + V2_STOP_ONLY @ 25 %)"
+    )
+    print(sep)
+    print(
+        "  Indicator periods NOT scaled across timeframes "
+        "(EMA-200 = 200 candles of that timeframe)."
+    )
+    print("  PAPER/TEST only. No timeframe or scenario declared optimal.")
+
+    for tf in TIMEFRAMES:
+        print(f"\n  ── Timeframe: {tf} ──")
+        hdr = (
+            f"  {'Scenario':<16} {'Year':>4} {'Ret%':>8} {'B&H%':>8} "
+            f"{'Trades':>7} {'WinR%':>7} {'ProfFact':>9} {'MaxDD%':>8} "
+            f"{'Fees':>8} {'SlipCost':>9} {'CostDrag%':>10} {'Exp%':>6}"
+        )
+        print(hdr)
+        print(f"  {'-' * 103}")
+        for scenario in COST_SCENARIO_NAMES:
+            for year in ("2023", "2024"):
+                r = next(
+                    x
+                    for x in report.results
+                    if x.timeframe == tf and x.cost_scenario == scenario and x.year == year
+                )
+                wr = f"{r.win_rate_pct:.1f}%" if r.win_rate_pct is not None else "N/A"
+                pf = f"{r.profit_factor:.4f}" if r.profit_factor is not None else "N/A"
+                print(
+                    f"  {scenario:<16} {year:>4} "
+                    f"{r.return_pct:>7.4f}% "
+                    f"{r.buy_and_hold_return_pct:>7.4f}% "
+                    f"{r.total_trades:>7} "
+                    f"{wr:>7} "
+                    f"{pf:>9} "
+                    f"{r.max_drawdown_pct:>7.4f}% "
+                    f"{r.total_fees:>8.2f} "
+                    f"{r.slippage_cost:>9.2f} "
+                    f"{r.cost_drag:>9.4f}% "
+                    f"{r.exposure_pct:>5.1f}%"
+                )
+
+    print(f"\n{sep}")
+    print("  MULTI-YEAR SUMMARY (2023→2024 compounded per scenario)")
+    print(sep)
+    hdr2 = (
+        f"  {'TF':<4} {'Scenario':<16} {'2023%':>8} {'2024%':>8} "
+        f"{'Combined%':>10} {'Comp23End':>10} {'Comp24End':>10} "
+        f"{'PosYrs':>7} {'WrstDD%':>8} {'Tr23':>5} {'Tr24':>5}"
+    )
+    print(hdr2)
+    print(f"  {'-' * 103}")
+    for tf in TIMEFRAMES:
+        for scenario in COST_SCENARIO_NAMES:
+            s = next(
+                x
+                for x in report.yearly_summary
+                if x.timeframe == tf and x.cost_scenario == scenario
+            )
+            print(
+                f"  {tf:<4} {scenario:<16} "
+                f"{s.return_pct_2023:>7.4f}% "
+                f"{s.return_pct_2024:>7.4f}% "
+                f"{s.combined_return_pct:>9.4f}% "
+                f"{s.compounded_final_2023:>10.2f} "
+                f"{s.compounded_final_2024:>10.2f} "
+                f"{s.positive_years:>7} "
+                f"{s.worst_drawdown_pct:>7.4f}% "
+                f"{s.total_trades_2023:>5} "
+                f"{s.total_trades_2024:>5}"
+            )
+
+    print(f"\n{sep}")
+    print("  ROBUSTNESS FLAGS")
+    print(sep)
+    hdr3 = (
+        f"  {'TF':<4} {'Scenario':<16} "
+        f"{'Pos2Yrs':>8} {'PF>1(2Y)':>9} {'DepLS':>6} {'FailCons':>9} {'<20Tr':>6}"
+    )
+    print(hdr3)
+    print(f"  {'-' * 62}")
+    for tf in TIMEFRAMES:
+        for scenario in COST_SCENARIO_NAMES:
+            rob = next(
+                x for x in report.robustness if x.timeframe == tf and x.cost_scenario == scenario
+            )
+            print(
+                f"  {tf:<4} {scenario:<16} "
+                f"{'YES' if rob.positive_both_years else 'NO':>8} "
+                f"{'YES' if rob.profit_factor_above_1_both_years else 'NO':>9} "
+                f"{'YES' if rob.depends_on_low_slippage else 'NO':>6} "
+                f"{'YES' if rob.fails_with_conservative else 'NO':>9} "
+                f"{'YES' if rob.low_trade_count else 'NO':>6}"
+            )
+    print(sep)
+    print("  No timeframe or cost scenario is declared optimal.")
+    print("  PAPER/TEST only. Past results do NOT predict future performance.")
 
 
 if __name__ == "__main__":
