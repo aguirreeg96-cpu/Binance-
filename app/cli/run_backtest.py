@@ -217,9 +217,16 @@ def main() -> None:
                 slippage_percentage=slip_pct,
                 force_close_at_end=not args.no_force_close,
             )
-            tc_report = svc.run_timeframe_cost_comparison(cfg_tc_23, cfg_tc_24)
+            tc_report, tc_audit = svc.run_timeframe_cost_audit(cfg_tc_23, cfg_tc_24)
             _print_timeframe_cost_comparison(tc_report)
             if args.export_dir:
+                from app.backtesting.timeframe_cost_audit import (
+                    export_audit_data_counts_csv,
+                    export_audit_json,
+                    export_audit_scenario_identity_csv,
+                    export_audit_slippage_csv,
+                    export_audit_warmup_boundaries_csv,
+                )
                 from app.backtesting.timeframe_cost_exporters import (
                     export_cost_sensitivity_csv,
                     export_timeframe_cost_csv,
@@ -235,17 +242,33 @@ def main() -> None:
                 tc_json = export_path / f"{slug}_timeframe_cost_comparison.json"
                 yr_csv = export_path / f"{slug}_yearly_timeframe_comparison.csv"
                 cs_csv = export_path / f"{slug}_cost_sensitivity.csv"
+                aud_counts = export_path / f"{slug}_audit_data_counts.csv"
+                aud_identity = export_path / f"{slug}_audit_scenario_trade_identity.csv"
+                aud_slip = export_path / f"{slug}_audit_slippage_by_trade.csv"
+                aud_warmup = export_path / f"{slug}_audit_warmup_boundaries.csv"
+                aud_json = export_path / f"{slug}_audit_report.json"
 
                 export_timeframe_cost_csv(tc_report, tc_csv)
                 export_timeframe_cost_json(tc_report, tc_json)
                 export_yearly_timeframe_csv(tc_report, yr_csv)
                 export_cost_sensitivity_csv(tc_report, cs_csv)
+                export_audit_data_counts_csv(tc_audit, aud_counts)
+                export_audit_scenario_identity_csv(tc_audit, aud_identity)
+                export_audit_slippage_csv(tc_audit, aud_slip)
+                export_audit_warmup_boundaries_csv(tc_audit, aud_warmup)
+                export_audit_json(tc_audit, aud_json)
 
                 print("\nTimeframe/cost exports:")
                 print(f"  Comparison CSV  : {tc_csv}")
                 print(f"  Comparison JSON : {tc_json}")
                 print(f"  Yearly CSV      : {yr_csv}")
                 print(f"  Sensitivity CSV : {cs_csv}")
+                print("\nAudit exports:")
+                print(f"  Data counts CSV : {aud_counts}")
+                print(f"  Identity CSV    : {aud_identity}")
+                print(f"  Slippage CSV    : {aud_slip}")
+                print(f"  Warmup CSV      : {aud_warmup}")
+                print(f"  Audit JSON      : {aud_json}")
             print(_WARNING)
             return
 

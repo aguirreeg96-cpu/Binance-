@@ -10,6 +10,15 @@ Indicator periods are NOT scaled across timeframes (Stage 5.2C design decision):
   EMA-200 on 30m uses 200 × 30m candles; EMA-200 on 1h uses 200 × 1h candles.
   This is a literal parameter comparison, not a duration-equivalent comparison.
 
+Stop-price note (Stage 5.2C.1 audit):
+  initial_stop = entry_exec_price − atr × multiplier; entry_exec_price varies with
+  slippage, so the stop trigger differs across cost scenarios.  Entry signals are
+  identical (indicator-based); exit timing and type may differ between scenarios.
+
+Cost-drag note for 2024 (Stage 5.2C.1 audit):
+  Each scenario's 2024 run starts from its own 2023 final equity, so cost_drag
+  in 2024 conflates 2024 execution costs with 2023 compounding differences.
+
 No timeframe is declared superior. PAPER/TEST only.
 Past results do NOT predict future performance.
 """
@@ -32,6 +41,7 @@ from app.strategy.entry_filter import EntryFilterConfig, EntryFilterType
 
 if TYPE_CHECKING:
     from app.backtesting.schemas import BacktestResult, BacktestTrade
+    from app.backtesting.timeframe_cost_audit import TimeframeCostAuditReport
 
 _ZERO = Decimal("0")
 _HUNDRED = Decimal("100")
@@ -214,12 +224,19 @@ def _run_frozen_single(
     return v2.run(all_candles, warmup_len)
 
 
-# ---------------------------------------------------------------------------
-# Public API
-# ---------------------------------------------------------------------------
+@dataclass
+class _ComparisonCore:
+    """Internal container shared by the report builder and the audit builder."""
+
+    raw: dict[tuple[str, str, str], BacktestResult]
+    agg_by_tf_year: dict[tuple[str, str], list[Candle]]
+    warmup_by_tf_year: dict[tuple[str, str], int]
+    candles_15m_by_year: dict[str, list[Candle]]
+    start_ms_by_year: dict[str, int]
+    end_ms_by_year: dict[str, int]
 
 
-def run_timeframe_cost_comparison(
+def _run_comparison_core(
     symbol: str,
     initial_capital: Decimal,
     candles_15m_2023: list[Candle],
@@ -228,58 +245,26 @@ def run_timeframe_cost_comparison(
     start_ms_2024: int,
     end_ms_2023: int,
     end_ms_2024: int,
-    force_close_at_end: bool = True,
-    indicator_config: IndicatorConfig | None = None,
-    strategy_config: StrategyEngineConfig | None = None,
-) -> TimeframeCostReport:
-    """Run frozen ENTRY_V3_ALIGNED_TREND + V2_STOP_ONLY across timeframes and cost scenarios.
-
-    Parameters
-    ----------
-    symbol:
-        Trading pair symbol (e.g. ``"BTCUSDT"``).
-    initial_capital:
-        Starting quote balance for 2023.  2024 uses 2023 final equity (compounded).
-    candles_15m_2023:
-        15m source candles for 2023, including extended warmup prefix.  Must be
-        ordered ascending by open_time.
-    candles_15m_2024:
-        15m source candles for 2024, including extended warmup prefix.
-    start_ms_2023 / start_ms_2024:
-        Inclusive lower bound of the evaluation period for each year (ms UTC).
-        Candles with open_time < start_ms are treated as warmup.
-    end_ms_2023 / end_ms_2024:
-        Exclusive upper bound of the evaluation period (ms UTC).
-    force_close_at_end:
-        Whether to force-close any open position at period end.
-    indicator_config / strategy_config:
-        Overrides for indicator and strategy parameters.  Defaults used when None.
-
-    Returns
-    -------
-    TimeframeCostReport
-        24 per-(timeframe, scenario, year) results, 12 yearly summaries, 12 robustness flags.
-
-    Notes
-    -----
-    Indicator periods are NOT scaled across timeframes.  EMA-200 means 200 candles of
-    whichever timeframe is used, not the same calendar duration.
-    PAPER/TEST only.  No result implies profitability.
-    Past results do NOT predict future performance.
-    """
+    force_close_at_end: bool,
+    ind_config: IndicatorConfig,
+    strat_config: StrategyEngineConfig,
+) -> _ComparisonCore:
+    """Aggregate candles, compute indicators, run all backtests, return shared core."""
     from app.backtesting.timeframe_aggregator import aggregate_candles, warmup_len_for
     from app.indicators.calculator import IndicatorCalculator
-    from app.market_data.interval_utils import INTERVAL_MS
 
-    ind_config = indicator_config or IndicatorConfig()
-    strat_config = strategy_config or StrategyEngineConfig()
-
-    # (timeframe, scenario, year) -> BacktestResult
     raw: dict[tuple[str, str, str], BacktestResult] = {}
+    agg_by_tf_year: dict[tuple[str, str], list[Candle]] = {}
+    warmup_by_tf_year: dict[tuple[str, str], int] = {}
+
+    candles_15m_by_year: dict[str, list[Candle]] = {
+        "2023": candles_15m_2023,
+        "2024": candles_15m_2024,
+    }
+    start_ms_by_year: dict[str, int] = {"2023": start_ms_2023, "2024": start_ms_2024}
+    end_ms_by_year: dict[str, int] = {"2023": end_ms_2023, "2024": end_ms_2024}
 
     for tf in TIMEFRAMES:
-        tf_ms = INTERVAL_MS[tf]
-
         if tf == "15m":
             agg_23: list[Candle] = candles_15m_2023
             agg_24: list[Candle] = candles_15m_2024
@@ -289,6 +274,11 @@ def run_timeframe_cost_comparison(
 
         warmup_23 = warmup_len_for(agg_23, start_ms_2023)
         warmup_24 = warmup_len_for(agg_24, start_ms_2024)
+
+        agg_by_tf_year[(tf, "2023")] = agg_23
+        agg_by_tf_year[(tf, "2024")] = agg_24
+        warmup_by_tf_year[(tf, "2023")] = warmup_23
+        warmup_by_tf_year[(tf, "2024")] = warmup_24
 
         if len(agg_23) <= warmup_23:
             raise BacktestInsufficientDataError(
@@ -340,6 +330,22 @@ def run_timeframe_cost_comparison(
                 agg_24, warmup_24, cfg_24, ind_results_24, ind_config, strat_config
             )
             raw[(tf, scenario, "2024")] = result_24
+
+    return _ComparisonCore(
+        raw=raw,
+        agg_by_tf_year=agg_by_tf_year,
+        warmup_by_tf_year=warmup_by_tf_year,
+        candles_15m_by_year=candles_15m_by_year,
+        start_ms_by_year=start_ms_by_year,
+        end_ms_by_year=end_ms_by_year,
+    )
+
+
+def _build_report(core: _ComparisonCore) -> TimeframeCostReport:
+    """Build the TimeframeCostReport from the shared _ComparisonCore."""
+    from app.market_data.interval_utils import INTERVAL_MS
+
+    raw = core.raw
 
     # ---- Build TimeframeCostResult objects ----
     results: list[TimeframeCostResult] = []
@@ -461,7 +467,6 @@ def run_timeframe_cost_comparison(
     # ---- Build robustness flags ----
     robustness: list[TimeframeCostRobustness] = []
     for tf in TIMEFRAMES:
-        # These comparisons are at the timeframe level (same value for all scenarios in tf).
         base_23 = raw[(tf, "BASE_COSTS", "2023")]
         base_24 = raw[(tf, "BASE_COSTS", "2024")]
         ls_23 = raw[(tf, "LOW_SLIPPAGE", "2023")]
@@ -504,3 +509,123 @@ def run_timeframe_cost_comparison(
         yearly_summary=yearly,
         robustness=robustness,
     )
+
+
+# ---------------------------------------------------------------------------
+# Public API
+# ---------------------------------------------------------------------------
+
+
+def run_timeframe_cost_comparison(
+    symbol: str,
+    initial_capital: Decimal,
+    candles_15m_2023: list[Candle],
+    candles_15m_2024: list[Candle],
+    start_ms_2023: int,
+    start_ms_2024: int,
+    end_ms_2023: int,
+    end_ms_2024: int,
+    force_close_at_end: bool = True,
+    indicator_config: IndicatorConfig | None = None,
+    strategy_config: StrategyEngineConfig | None = None,
+) -> TimeframeCostReport:
+    """Run frozen ENTRY_V3_ALIGNED_TREND + V2_STOP_ONLY across timeframes and cost scenarios.
+
+    Parameters
+    ----------
+    symbol:
+        Trading pair symbol (e.g. ``"BTCUSDT"``).
+    initial_capital:
+        Starting quote balance for 2023.  2024 uses 2023 final equity (compounded).
+    candles_15m_2023:
+        15m source candles for 2023, including extended warmup prefix.  Must be
+        ordered ascending by open_time.
+    candles_15m_2024:
+        15m source candles for 2024, including extended warmup prefix.
+    start_ms_2023 / start_ms_2024:
+        Inclusive lower bound of the evaluation period for each year (ms UTC).
+        Candles with open_time < start_ms are treated as warmup.
+    end_ms_2023 / end_ms_2024:
+        Exclusive upper bound of the evaluation period (ms UTC).
+    force_close_at_end:
+        Whether to force-close any open position at period end.
+    indicator_config / strategy_config:
+        Overrides for indicator and strategy parameters.  Defaults used when None.
+
+    Returns
+    -------
+    TimeframeCostReport
+        24 per-(timeframe, scenario, year) results, 12 yearly summaries, 12 robustness flags.
+
+    Notes
+    -----
+    Indicator periods are NOT scaled across timeframes.  EMA-200 means 200 candles of
+    whichever timeframe is used, not the same calendar duration.
+    PAPER/TEST only.  No result implies profitability.
+    Past results do NOT predict future performance.
+    """
+    ind_config = indicator_config or IndicatorConfig()
+    strat_config = strategy_config or StrategyEngineConfig()
+    core = _run_comparison_core(
+        symbol=symbol,
+        initial_capital=initial_capital,
+        candles_15m_2023=candles_15m_2023,
+        candles_15m_2024=candles_15m_2024,
+        start_ms_2023=start_ms_2023,
+        start_ms_2024=start_ms_2024,
+        end_ms_2023=end_ms_2023,
+        end_ms_2024=end_ms_2024,
+        force_close_at_end=force_close_at_end,
+        ind_config=ind_config,
+        strat_config=strat_config,
+    )
+    return _build_report(core)
+
+
+def run_timeframe_cost_audit(
+    symbol: str,
+    initial_capital: Decimal,
+    candles_15m_2023: list[Candle],
+    candles_15m_2024: list[Candle],
+    start_ms_2023: int,
+    start_ms_2024: int,
+    end_ms_2023: int,
+    end_ms_2024: int,
+    force_close_at_end: bool = True,
+    indicator_config: IndicatorConfig | None = None,
+    strategy_config: StrategyEngineConfig | None = None,
+) -> tuple[TimeframeCostReport, TimeframeCostAuditReport]:
+    """Run Stage 5.2C.1 audit: comparison report + data integrity audit.
+
+    Runs all backtests once; builds both the cost-comparison report and the
+    full audit report from the same raw results.
+    PAPER/TEST only.  No result implies profitability.
+    Past results do NOT predict future performance.
+    """
+    from app.backtesting.timeframe_cost_audit import build_audit_from_raw
+
+    ind_config = indicator_config or IndicatorConfig()
+    strat_config = strategy_config or StrategyEngineConfig()
+    core = _run_comparison_core(
+        symbol=symbol,
+        initial_capital=initial_capital,
+        candles_15m_2023=candles_15m_2023,
+        candles_15m_2024=candles_15m_2024,
+        start_ms_2023=start_ms_2023,
+        start_ms_2024=start_ms_2024,
+        end_ms_2023=end_ms_2023,
+        end_ms_2024=end_ms_2024,
+        force_close_at_end=force_close_at_end,
+        ind_config=ind_config,
+        strat_config=strat_config,
+    )
+    report = _build_report(core)
+    audit = build_audit_from_raw(
+        raw=core.raw,
+        agg_by_tf_year=core.agg_by_tf_year,
+        warmup_by_tf_year=core.warmup_by_tf_year,
+        candles_15m_by_year=core.candles_15m_by_year,
+        start_ms_by_year=core.start_ms_by_year,
+        end_ms_by_year=core.end_ms_by_year,
+    )
+    return report, audit

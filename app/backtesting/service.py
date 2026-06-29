@@ -23,6 +23,7 @@ if TYPE_CHECKING:
     from app.backtesting.entry_comparison import EntryComparisonReport, EntryMultiPeriodReport
     from app.backtesting.normalized_comparison import MultiPeriodReport, NormalizedComparisonReport
     from app.backtesting.risk_exit_config import RiskExitConfig
+    from app.backtesting.timeframe_cost_audit import TimeframeCostAuditReport
     from app.backtesting.timeframe_cost_comparison import TimeframeCostReport
     from app.backtesting.variants import ComparisonReport
 
@@ -482,7 +483,7 @@ class BacktestService:
         warmup_count = ind_config.warmup_candles * 4
         repo = CandleRepository(self.db)
 
-        all_candles_23, _ = repo.query_for_indicators(
+        all_candles_23, warmup_len_23 = repo.query_for_indicators(
             symbol=config_2023.symbol,
             interval="15m",
             warmup_count=warmup_count,
@@ -495,7 +496,7 @@ class BacktestService:
                 "Download historical data first using the CLI."
             )
 
-        all_candles_24, _ = repo.query_for_indicators(
+        all_candles_24, warmup_len_24 = repo.query_for_indicators(
             symbol=config_2024.symbol,
             interval="15m",
             warmup_count=warmup_count,
@@ -509,13 +510,95 @@ class BacktestService:
             )
 
         logger.info(
-            "Timeframe cost comparison %s: 2023=%d 15m candles, 2024=%d 15m candles",
+            "Timeframe cost comparison %s: "
+            "2023=%d 15m candles (%d warmup + %d eval), "
+            "2024=%d 15m candles (%d warmup + %d eval)",
             config_2023.symbol,
             len(all_candles_23),
+            warmup_len_23,
+            len(all_candles_23) - warmup_len_23,
             len(all_candles_24),
+            warmup_len_24,
+            len(all_candles_24) - warmup_len_24,
         )
 
         return _run_tcc(
+            symbol=config_2023.symbol,
+            initial_capital=config_2023.initial_capital,
+            candles_15m_2023=all_candles_23,
+            candles_15m_2024=all_candles_24,
+            start_ms_2023=config_2023.start_ms,
+            start_ms_2024=config_2024.start_ms,
+            end_ms_2023=config_2023.end_ms,
+            end_ms_2024=config_2024.end_ms,
+            force_close_at_end=config_2023.force_close_at_end,
+            indicator_config=ind_config,
+            strategy_config=strat_config,
+        )
+
+    def run_timeframe_cost_audit(
+        self,
+        config_2023: BacktestConfig,
+        config_2024: BacktestConfig,
+        indicator_config: IndicatorConfig | None = None,
+        strategy_config: StrategyEngineConfig | None = None,
+    ) -> "tuple[TimeframeCostReport, TimeframeCostAuditReport]":
+        """Run Stage 5.2C.1 audit: cost comparison report + data integrity audit.
+
+        Loads 15m candles with 4× warmup count so all timeframes have adequate warmup
+        after aggregation.  Runs all backtests once; builds both reports from the same
+        raw results.
+        PAPER/TEST only — no real orders, no real capital at risk.
+        """
+        from app.backtesting.timeframe_cost_comparison import (
+            run_timeframe_cost_audit as _run_tca,
+        )
+
+        ind_config = indicator_config or IndicatorConfig()
+        strat_config = strategy_config or StrategyEngineConfig()
+        warmup_count = ind_config.warmup_candles * 4
+        repo = CandleRepository(self.db)
+
+        all_candles_23, warmup_len_23 = repo.query_for_indicators(
+            symbol=config_2023.symbol,
+            interval="15m",
+            warmup_count=warmup_count,
+            start_ms=config_2023.start_ms,
+            end_ms=config_2023.end_ms,
+        )
+        if not any(c.open_time >= config_2023.start_ms for c in all_candles_23):
+            raise BacktestInsufficientDataError(
+                f"No 2023 15m candles for {config_2023.symbol}. "
+                "Download historical data first using the CLI."
+            )
+
+        all_candles_24, warmup_len_24 = repo.query_for_indicators(
+            symbol=config_2024.symbol,
+            interval="15m",
+            warmup_count=warmup_count,
+            start_ms=config_2024.start_ms,
+            end_ms=config_2024.end_ms,
+        )
+        if not any(c.open_time >= config_2024.start_ms for c in all_candles_24):
+            raise BacktestInsufficientDataError(
+                f"No 2024 15m candles for {config_2024.symbol}. "
+                "Download historical data first using the CLI."
+            )
+
+        logger.info(
+            "Timeframe cost audit %s: "
+            "2023=%d 15m candles (%d warmup + %d eval), "
+            "2024=%d 15m candles (%d warmup + %d eval)",
+            config_2023.symbol,
+            len(all_candles_23),
+            warmup_len_23,
+            len(all_candles_23) - warmup_len_23,
+            len(all_candles_24),
+            warmup_len_24,
+            len(all_candles_24) - warmup_len_24,
+        )
+
+        return _run_tca(
             symbol=config_2023.symbol,
             initial_capital=config_2023.initial_capital,
             candles_15m_2023=all_candles_23,
