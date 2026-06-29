@@ -21,6 +21,7 @@ from app.strategy.engine import StrategyEngine
 
 if TYPE_CHECKING:
     from app.backtesting.entry_comparison import EntryComparisonReport, EntryMultiPeriodReport
+    from app.backtesting.frozen_oos_2025 import FrozenOos2025Report
     from app.backtesting.normalized_comparison import MultiPeriodReport, NormalizedComparisonReport
     from app.backtesting.risk_exit_config import RiskExitConfig
     from app.backtesting.timeframe_cost_audit import TimeframeCostAuditReport
@@ -608,6 +609,60 @@ class BacktestService:
             end_ms_2023=config_2023.end_ms,
             end_ms_2024=config_2024.end_ms,
             force_close_at_end=config_2023.force_close_at_end,
+            indicator_config=ind_config,
+            strategy_config=strat_config,
+        )
+
+    def run_frozen_oos_2025(
+        self,
+        config_2025: BacktestConfig,
+        indicator_config: IndicatorConfig | None = None,
+        strategy_config: StrategyEngineConfig | None = None,
+    ) -> "FrozenOos2025Report":
+        """Run Stage 5.3 frozen OOS evaluation on 2025 data.
+
+        Loads 15m candles with 2× warmup count (30m = 2 × 15m candles per warmup slot).
+        Aggregates to 30m and evaluates 3 cost scenarios (NO_COSTS, BASE_COSTS, CONSERVATIVE).
+        Strategy filter and risk config are frozen — passed indicator/strategy configs affect
+        indicator calculation and base strategy only, not filter/risk parameters.
+        PAPER/TEST only — no real orders, no real capital at risk.
+        """
+        from app.backtesting.frozen_oos_2025 import run_frozen_oos_2025 as _run_oos
+
+        ind_config = indicator_config or IndicatorConfig()
+        strat_config = strategy_config or StrategyEngineConfig()
+        # 2× warmup: each 30m warmup candle requires 2 source 15m candles.
+        warmup_count = ind_config.warmup_candles * 2
+        repo = CandleRepository(self.db)
+
+        all_candles_2025, warmup_len_2025 = repo.query_for_indicators(
+            symbol=config_2025.symbol,
+            interval="15m",
+            warmup_count=warmup_count,
+            start_ms=config_2025.start_ms,
+            end_ms=config_2025.end_ms,
+        )
+        if not any(c.open_time >= config_2025.start_ms for c in all_candles_2025):
+            raise BacktestInsufficientDataError(
+                f"No 2025 15m candles for {config_2025.symbol}. "
+                "Download 2025 historical data first using the CLI."
+            )
+
+        logger.info(
+            "Frozen OOS 2025 %s: %d 15m candles (%d warmup + %d eval)",
+            config_2025.symbol,
+            len(all_candles_2025),
+            warmup_len_2025,
+            len(all_candles_2025) - warmup_len_2025,
+        )
+
+        return _run_oos(
+            symbol=config_2025.symbol,
+            initial_capital=config_2025.initial_capital,
+            candles_15m_2025=all_candles_2025,
+            start_ms_2025=config_2025.start_ms,
+            end_ms_2025=config_2025.end_ms,
+            force_close_at_end=config_2025.force_close_at_end,
             indicator_config=ind_config,
             strategy_config=strat_config,
         )

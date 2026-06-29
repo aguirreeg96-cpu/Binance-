@@ -26,6 +26,7 @@ from typing import TYPE_CHECKING
 if TYPE_CHECKING:
     from app.backtesting.diagnostics import BacktestDiagnostics
     from app.backtesting.entry_comparison import EntryMultiPeriodReport
+    from app.backtesting.frozen_oos_2025 import FrozenOos2025Report
     from app.backtesting.normalized_comparison import MultiPeriodReport
     from app.backtesting.timeframe_cost_comparison import TimeframeCostReport
     from app.backtesting.variants import ComparisonReport
@@ -152,6 +153,21 @@ def _build_parser() -> argparse.ArgumentParser:
             "when --export-dir is set."
         ),
     )
+    p.add_argument(
+        "--run-frozen-oos-2025",
+        action="store_true",
+        help=(
+            "Stage 5.3: run the frozen candidate (ENTRY_V3_ALIGNED_TREND + "
+            "V2_STOP_ONLY @ 25%%) on 2025 out-of-sample data exclusively. "
+            "Source: local BTCUSDT 15m candles aggregated to 30m. "
+            "Requires --interval 15m and local 2025 candles. "
+            "3 scenarios: NO_COSTS, BASE_COSTS, CONSERVATIVE. "
+            "Exports BTCUSDT_30m_2025_oos_summary.json, _oos_scenarios.csv, "
+            "_oos_trades.csv, _oos_equity_curve.csv, _oos_audit.json "
+            "when --export-dir is set. "
+            "Do NOT modify strategy parameters after seeing the result."
+        ),
+    )
     return p
 
 
@@ -269,6 +285,56 @@ def main() -> None:
                 print(f"  Slippage CSV    : {aud_slip}")
                 print(f"  Warmup CSV      : {aud_warmup}")
                 print(f"  Audit JSON      : {aud_json}")
+            print(_WARNING)
+            return
+
+        elif args.run_frozen_oos_2025:
+            # ---- Stage 5.3: frozen OOS 2025 evaluation ----
+            _MS_2025_START = int(datetime(2025, 1, 1, tzinfo=UTC).timestamp() * 1000)
+            _MS_2026_START = int(datetime(2026, 1, 1, tzinfo=UTC).timestamp() * 1000)
+            cfg_oos = BacktestConfig(
+                symbol=args.symbol,
+                interval="15m",
+                start_ms=_MS_2025_START,
+                end_ms=_MS_2026_START,
+                initial_capital=initial_capital,
+                fee_percentage=fee_pct,
+                slippage_percentage=slip_pct,
+                force_close_at_end=not args.no_force_close,
+            )
+            oos_report = svc.run_frozen_oos_2025(cfg_oos)
+            _print_frozen_oos_2025(oos_report)
+            if args.export_dir:
+                from app.backtesting.frozen_oos_exporters import (
+                    export_oos_audit_json,
+                    export_oos_equity_curve_csv,
+                    export_oos_scenarios_csv,
+                    export_oos_summary_json,
+                    export_oos_trades_csv,
+                )
+
+                export_path = Path(args.export_dir)
+                export_path.mkdir(parents=True, exist_ok=True)
+                slug = "BTCUSDT_30m_2025"
+
+                oos_summary = export_path / f"{slug}_oos_summary.json"
+                oos_scenarios = export_path / f"{slug}_oos_scenarios.csv"
+                oos_trades = export_path / f"{slug}_oos_trades.csv"
+                oos_equity = export_path / f"{slug}_oos_equity_curve.csv"
+                oos_audit = export_path / f"{slug}_oos_audit.json"
+
+                export_oos_summary_json(oos_report, oos_summary)
+                export_oos_scenarios_csv(oos_report, oos_scenarios)
+                export_oos_trades_csv(oos_report, oos_trades)
+                export_oos_equity_curve_csv(oos_report, oos_equity)
+                export_oos_audit_json(oos_report, oos_audit)
+
+                print("\nOOS 2025 exports:")
+                print(f"  Summary JSON    : {oos_summary}")
+                print(f"  Scenarios CSV   : {oos_scenarios}")
+                print(f"  Trades CSV      : {oos_trades}")
+                print(f"  Equity curve CSV: {oos_equity}")
+                print(f"  Audit JSON      : {oos_audit}")
             print(_WARNING)
             return
 
@@ -966,6 +1032,101 @@ def _print_timeframe_cost_comparison(report: "TimeframeCostReport") -> None:
             )
     print(sep)
     print("  No timeframe or cost scenario is declared optimal.")
+    print("  PAPER/TEST only. Past results do NOT predict future performance.")
+
+
+def _print_frozen_oos_2025(report: "FrozenOos2025Report") -> None:
+    """Print the frozen OOS 2025 result table."""
+    sep = "=" * 90
+    print(f"\n{sep}")
+    print(
+        "  STAGE 5.3 — FROZEN OUT-OF-SAMPLE 2025  " "(ENTRY_V3_ALIGNED_TREND + V2_STOP_ONLY @ 25 %)"
+    )
+    print(sep)
+    print(
+        "  Source: BTCUSDT 15m → 30m aggregated.  " "Period: 2025-01-01 to 2026-01-01 exclusively."
+    )
+    print("  PAPER/TEST only. No parameter modification after viewing this result.")
+
+    print(
+        f"\n  {'Scenario':<16} {'Ret%':>9} {'B&H%':>9} {'Trades':>7} "
+        f"{'WinR%':>7} {'ProfFact':>9} {'MaxDD%':>8} {'Fees':>9} {'SlipCost':>9} {'Exp%':>6}"
+    )
+    print(f"  {'-' * 88}")
+    for s in report.scenarios:
+        wr = f"{s.win_rate_pct:.1f}%" if s.win_rate_pct is not None else "N/A"
+        pf = f"{s.profit_factor:.4f}" if s.profit_factor is not None else "N/A"
+        print(
+            f"  {s.scenario:<16} "
+            f"{s.return_pct:>8.4f}% "
+            f"{s.buy_and_hold_return_pct:>8.4f}% "
+            f"{s.total_trades:>7} "
+            f"{wr:>7} "
+            f"{pf:>9} "
+            f"{s.max_drawdown_pct:>7.4f}% "
+            f"{s.total_fees:>9.4f} "
+            f"{s.slippage_cost:>9.4f} "
+            f"{s.exposure_pct:>5.1f}%"
+        )
+
+    print(f"\n{sep}")
+    print("  INTERPRETATION FLAGS")
+    print(sep)
+    intp = report.interpretation
+    flags = [
+        ("profitable_no_costs", intp.profitable_no_costs),
+        ("profitable_base_costs", intp.profitable_base_costs),
+        ("profitable_conservative", intp.profitable_conservative),
+        ("profit_factor_above_1_base", intp.profit_factor_above_1_base),
+        ("costs_monotonic", intp.costs_monotonic),
+        ("drawdown_below_historical", intp.drawdown_below_historical),
+        ("return_above_historical_min", intp.return_above_historical_min),
+        ("sufficient_trades (>=5)", intp.sufficient_trades),
+    ]
+    for name, value in flags:
+        print(f"  {'YES' if value else 'NO':>4}  {name}")
+
+    ref = report.historical_reference
+    print(f"\n{sep}")
+    print("  HISTORICAL IN-SAMPLE REFERENCE (2023–2024, BASE_COSTS, read-only)")
+    print(sep)
+    print(f"  2023 return  : {ref['period_2023_return_pct']}%")
+    print(f"  2024 return  : {ref['period_2024_return_pct']}%")
+    print(f"  Combined     : {ref['combined_return_pct']}%")
+    print(f"  Total trades : {ref['total_trades_2023_2024']}")
+    print(f"  Worst DD     : {ref['worst_drawdown_pct']}%")
+    print(f"  Note         : {ref['note']}")
+
+    aud = report.audit
+    print(f"\n{sep}")
+    print("  AUDIT SUMMARY")
+    print(sep)
+    print(
+        f"  15m candles  : {aud.candles_15m_total} total "
+        f"({aud.warmup_15m} warmup + {aud.eval_15m} eval)"
+    )
+    print(
+        f"  30m candles  : {aud.candles_30m_total} total "
+        f"({aud.warmup_30m} warmup + {aud.eval_30m} eval)"
+    )
+    print(f"  Signal hash  : {aud.entry_signal_hash}")
+    print(f"  Warmup ok    : {aud.warmup_boundary_ok}")
+    print(f"  End ok       : {aud.end_boundary_ok}")
+    print(f"  Monotonic    : {aud.costs_monotonic}")
+    if aud.missing_data_ranges:
+        print("  Missing data :")
+        for gap in aud.missing_data_ranges:
+            print(f"    {gap}")
+    else:
+        print("  Missing data : none detected")
+    if aud.violations:
+        print("  Violations   :")
+        for v in aud.violations:
+            print(f"    {v}")
+    else:
+        print("  Violations   : none")
+    print(sep)
+    print("  No result constitutes a trading recommendation.")
     print("  PAPER/TEST only. Past results do NOT predict future performance.")
 
 
