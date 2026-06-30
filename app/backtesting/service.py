@@ -20,6 +20,7 @@ from app.strategy.config import StrategyEngineConfig
 from app.strategy.engine import StrategyEngine
 
 if TYPE_CHECKING:
+    from app.backtesting.breakout_family import BreakoutFamilyReport
     from app.backtesting.entry_comparison import EntryComparisonReport, EntryMultiPeriodReport
     from app.backtesting.frozen_oos_2025 import FrozenOos2025Report
     from app.backtesting.normalized_comparison import MultiPeriodReport, NormalizedComparisonReport
@@ -665,4 +666,64 @@ class BacktestService:
             force_close_at_end=config_2025.force_close_at_end,
             indicator_config=ind_config,
             strategy_config=strat_config,
+        )
+
+    def run_breakout_family(
+        self,
+        symbol: str = "BTCUSDT",
+        initial_capital_str: str = "10000",
+        force_close_at_end: bool = True,
+    ) -> "BreakoutFamilyReport":
+        """Run Stage 6.0 Donchian breakout family evaluation (2021–2025).
+
+        Loads 15m candles with 3 500 warmup candles before 2021-01-01 to ensure
+        adequate indicator history for all timeframes (including 4h EMA-200).
+        Aborts if any (year × timeframe) has zero eval candles.
+        PAPER/TEST only — no real orders, no real capital at risk.
+        """
+        from decimal import Decimal
+
+        from app.backtesting.breakout_family import (
+            _YEAR_END_MS,
+            _YEAR_START_MS,
+            BREAKOUT_YEARS,
+        )
+        from app.backtesting.breakout_family import (
+            run_breakout_family as _run_bf,
+        )
+
+        initial_capital = Decimal(initial_capital_str)
+        start_ms = _YEAR_START_MS[BREAKOUT_YEARS[0]]  # 2021-01-01
+        end_ms = _YEAR_END_MS[BREAKOUT_YEARS[-1]]  # 2026-01-01
+
+        warmup_count = 3_500  # sufficient for EMA-200 on 4h (200 × 16 = 3200 + buffer)
+        repo = CandleRepository(self.db)
+
+        all_candles_15m, warmup_len = repo.query_for_indicators(
+            symbol=symbol,
+            interval="15m",
+            warmup_count=warmup_count,
+            start_ms=start_ms,
+            end_ms=end_ms,
+        )
+
+        if not any(c.open_time >= start_ms for c in all_candles_15m):
+            raise BacktestInsufficientDataError(
+                f"No 2021–2025 15m candles for {symbol}. "
+                "Download historical data first using the CLI."
+            )
+
+        logger.info(
+            "Breakout family %s: %d 15m candles (%d warmup + %d eval)",
+            symbol,
+            len(all_candles_15m),
+            warmup_len,
+            len(all_candles_15m) - warmup_len,
+        )
+
+        return _run_bf(
+            symbol=symbol,
+            all_candles_15m=all_candles_15m,
+            initial_capital=initial_capital,
+            force_close_at_end=force_close_at_end,
         )

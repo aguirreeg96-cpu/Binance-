@@ -24,6 +24,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
+    from app.backtesting.breakout_family import BreakoutFamilyReport
     from app.backtesting.diagnostics import BacktestDiagnostics
     from app.backtesting.entry_comparison import EntryMultiPeriodReport
     from app.backtesting.frozen_oos_2025 import FrozenOos2025Report
@@ -168,6 +169,20 @@ def _build_parser() -> argparse.ArgumentParser:
             "Do NOT modify strategy parameters after seeing the result."
         ),
     )
+    p.add_argument(
+        "--compare-breakout-family",
+        action="store_true",
+        help=(
+            "Stage 6.0: evaluate 8 pre-registered Donchian breakout configurations "
+            "(A–D × 1h/4h) over 2021–2025 with 3 cost scenarios each. "
+            "Requires local BTCUSDT 15m candles for 2021–2025 with warmup before 2021. "
+            "Aborts if any year has missing data — no partial results. "
+            "Exports BTCUSDT_donchian_yearly.csv, _compounded.csv, "
+            "_robustness.csv, _trades.csv, _equity_curves.csv, "
+            "_audit.json, _report.json when --export-dir is set. "
+            "Do NOT add or modify configurations after seeing the result."
+        ),
+    )
     return p
 
 
@@ -207,7 +222,57 @@ def main() -> None:
     try:
         svc = BacktestService(db)
 
-        if args.compare_timeframes_costs:
+        if args.compare_breakout_family:
+            # ---- Stage 6.0: Donchian breakout family ----
+            bf_report = svc.run_breakout_family(
+                symbol=args.symbol,
+                initial_capital_str=args.initial_capital,
+                force_close_at_end=not args.no_force_close,
+            )
+            _print_breakout_family(bf_report)
+            if args.export_dir:
+                from app.backtesting.breakout_exporters import (
+                    export_breakout_audit_json,
+                    export_breakout_compounded_results_csv,
+                    export_breakout_equity_curves_csv,
+                    export_breakout_report_json,
+                    export_breakout_robustness_summary_csv,
+                    export_breakout_trades_csv,
+                    export_breakout_yearly_results_csv,
+                )
+
+                export_path = Path(args.export_dir)
+                export_path.mkdir(parents=True, exist_ok=True)
+                slug = f"{args.symbol}_donchian"
+
+                bf_yearly = export_path / f"{slug}_yearly.csv"
+                bf_compound = export_path / f"{slug}_compounded.csv"
+                bf_robust = export_path / f"{slug}_robustness.csv"
+                bf_trades = export_path / f"{slug}_trades.csv"
+                bf_equity = export_path / f"{slug}_equity_curves.csv"
+                bf_audit = export_path / f"{slug}_audit.json"
+                bf_report_json = export_path / f"{slug}_report.json"
+
+                export_breakout_yearly_results_csv(bf_report, bf_yearly)
+                export_breakout_compounded_results_csv(bf_report, bf_compound)
+                export_breakout_robustness_summary_csv(bf_report, bf_robust)
+                export_breakout_trades_csv(bf_report, bf_trades)
+                export_breakout_equity_curves_csv(bf_report, bf_equity)
+                export_breakout_audit_json(bf_report, bf_audit)
+                export_breakout_report_json(bf_report, bf_report_json)
+
+                print("\nBreakout family exports:")
+                print(f"  Yearly CSV      : {bf_yearly}")
+                print(f"  Compounded CSV  : {bf_compound}")
+                print(f"  Robustness CSV  : {bf_robust}")
+                print(f"  Trades CSV      : {bf_trades}")
+                print(f"  Equity CSV      : {bf_equity}")
+                print(f"  Audit JSON      : {bf_audit}")
+                print(f"  Report JSON     : {bf_report_json}")
+            print(_WARNING)
+            return
+
+        elif args.compare_timeframes_costs:
             # ---- Timeframe × cost robustness mode (Stage 5.2C) ----
 
             _MS_2023_START = int(datetime(2023, 1, 1, tzinfo=UTC).timestamp() * 1000)
@@ -1127,6 +1192,120 @@ def _print_frozen_oos_2025(report: "FrozenOos2025Report") -> None:
         print("  Violations   : none")
     print(sep)
     print("  No result constitutes a trading recommendation.")
+    print("  PAPER/TEST only. Past results do NOT predict future performance.")
+
+
+def _print_breakout_family(report: "BreakoutFamilyReport") -> None:
+    """Print Stage 6.0 Donchian breakout family results."""
+    from app.backtesting.breakout_family import (
+        BREAKOUT_YEARS,
+        select_best_qualified,
+    )
+
+    sep = "=" * 100
+    print(f"\n{sep}")
+    print("  STAGE 6.0 — DONCHIAN BREAKOUT FAMILY  " "(8 configs × 3 scenarios × 2021–2025)")
+    print(sep)
+    print(
+        "  PAPER/TEST only. No real money. " "Do NOT modify configurations after viewing results."
+    )
+
+    # ---- Per-config compounded summary ----
+    print(f"\n{sep}")
+    print("  COMPOUNDED 5-YEAR RESULTS (initial capital carried forward year-to-year)")
+    print(sep)
+    hdr = (
+        f"  {'Config':>8} {'Scenario':<16} {'TotalRet%':>10} "
+        f"{'FinalEquity':>12} {'ProfFact':>9} {'MaxDD%':>8} "
+        f"{'Trades':>7} {'YrsData':>8}"
+    )
+    print(hdr)
+    print(f"  {'-' * 98}")
+    for r in report.compounded_results:
+        pf = f"{r.profit_factor:.4f}" if r.profit_factor is not None else "N/A"
+        print(
+            f"  {r.config_id:>8} {r.scenario:<16} "
+            f"{r.total_return_pct:>9.4f}% "
+            f"{r.final_equity:>12.2f} "
+            f"{pf:>9} "
+            f"{r.max_drawdown_pct:>7.4f}% "
+            f"{r.total_trades:>7} "
+            f"{r.years_with_data:>8}"
+        )
+
+    # ---- Standalone per-year summary (BASE_COSTS only) ----
+    print(f"\n{sep}")
+    print("  STANDALONE PER-YEAR RETURNS (BASE_COSTS, initial capital = 10 000 each year)")
+    print(sep)
+    hdr2 = f"  {'Config':>8} " + " ".join(f"{yr:>8}" for yr in BREAKOUT_YEARS)
+    print(hdr2)
+    print(f"  {'-' * 98}")
+    config_ids = sorted({r.config_id for r in report.yearly_results})
+    for config_id in config_ids:
+        yr_returns = {}
+        for yr in BREAKOUT_YEARS:
+            yr_r = next(
+                (
+                    r
+                    for r in report.yearly_results
+                    if r.config_id == config_id and r.year == yr and r.scenario == "BASE_COSTS"
+                ),
+                None,
+            )
+            yr_returns[yr] = f"{yr_r.return_pct:>7.2f}%" if yr_r else "   N/A"
+        row = f"  {config_id:>8} " + " ".join(yr_returns[yr] for yr in BREAKOUT_YEARS)
+        print(row)
+
+    # ---- Qualification summary ----
+    print(f"\n{sep}")
+    print("  QUALIFICATION SUMMARY  (all 9 criteria must pass)")
+    print(sep)
+    hdr3 = (
+        f"  {'Config':>8} {'Status':>10} "
+        f"{'BCPos':>6} {'CPos':>5} {'Yrs≥3':>6} "
+        f"{'PF>1.1':>7} {'DD<15':>6} {'Tr≥30':>6} "
+        f"{'NoNeg':>6} {'Conc':>5} {'NoVio':>6}"
+    )
+    print(hdr3)
+    print(f"  {'-' * 98}")
+    for rob in report.robustness:
+        check_map = {c.name: c.passed for c in rob.qualification_checks}
+        status = "QUALIFIED" if rob.is_qualified else "REJECTED"
+        print(
+            f"  {rob.config_id:>8} {status:>10} "
+            f"{'Y' if check_map.get('compounded_base_positive') else 'N':>6} "
+            f"{'Y' if check_map.get('compounded_conservative_positive') else 'N':>5} "
+            f"{'Y' if check_map.get('years_positive_ge3') else 'N':>6} "
+            f"{'Y' if check_map.get('profit_factor_gt1_10') else 'N':>7} "
+            f"{'Y' if check_map.get('max_drawdown_lt15') else 'N':>6} "
+            f"{'Y' if check_map.get('min_trades_30') else 'N':>6} "
+            f"{'Y' if check_map.get('no_year_below_neg10') else 'N':>6} "
+            f"{'Y' if check_map.get('best_year_le70pct_gross') else 'N':>5} "
+            f"{'Y' if check_map.get('no_violations') else 'N':>6}"
+        )
+
+    best = select_best_qualified(report.robustness)
+    print(f"\n  Best qualified config : {best if best else 'NONE — no config qualified'}")
+
+    # ---- Audit ----
+    aud = report.audit
+    print(f"\n{sep}")
+    print("  AUDIT")
+    print(sep)
+    print(f"  15m candles total : {aud.candles_15m_total}")
+    print(f"  Years covered     : {', '.join(aud.years_covered)}")
+    if aud.missing_data_years:
+        print(f"  Missing years     : {', '.join(aud.missing_data_years)}")
+    else:
+        print("  Missing years     : none")
+    if aud.violations:
+        print("  Violations        :")
+        for v in aud.violations:
+            print(f"    {v}")
+    else:
+        print("  Violations        : none")
+    print(sep)
+    print("  No configuration is declared optimal or expected to be profitable.")
     print("  PAPER/TEST only. Past results do NOT predict future performance.")
 
 

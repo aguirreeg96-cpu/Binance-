@@ -232,9 +232,9 @@ class TestNoNegativeBalance:
     def test_final_equity_non_negative(self):
         report = _run()
         for r in report.matrix:
-            assert r.final_equity >= _D("0"), (
-                f"{r.variant_name}@{r.allocation_pct}% has negative equity: {r.final_equity}"
-            )
+            assert r.final_equity >= _D(
+                "0"
+            ), f"{r.variant_name}@{r.allocation_pct}% has negative equity: {r.final_equity}"
 
     def test_slippage_cost_non_negative(self):
         report = _run()
@@ -289,9 +289,9 @@ class TestEntrySIgnalConsistency:
             if all(c > 0 for c in counts):
                 # All three allocations should have same trade count
                 # (signals don't depend on capital size)
-                assert counts[0] == counts[1] == counts[2], (
-                    f"{name} has inconsistent trade counts: {counts}"
-                )
+                assert (
+                    counts[0] == counts[1] == counts[2]
+                ), f"{name} has inconsistent trade counts: {counts}"
 
 
 # ---------------------------------------------------------------------------

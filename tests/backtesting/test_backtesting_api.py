@@ -216,6 +216,6 @@ class TestBacktestingAPISecurityHeaders:
             "open_short",
         ]
         for term in forbidden:
-            assert term.lower() not in source.lower(), (
-                f"Forbidden term {term!r} found in backtesting API module"
-            )
+            assert (
+                term.lower() not in source.lower()
+            ), f"Forbidden term {term!r} found in backtesting API module"
