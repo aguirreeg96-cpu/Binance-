@@ -155,9 +155,9 @@ class TestGetKlines:
                 "taker_buy_base_volume",
                 "taker_buy_quote_volume",
             ):
-                assert isinstance(
-                    candle_item[field], str
-                ), f"Field {field!r} should be string in JSON response"
+                assert isinstance(candle_item[field], str), (
+                    f"Field {field!r} should be string in JSON response"
+                )
 
     def test_timestamps_include_iso_string(self, api_client, test_session, mock_market_client):
         _seed_candle(test_session, 1_700_300_000_000)
@@ -286,9 +286,9 @@ class TestArchitectureGuards:
         }
         for name in method_names:
             for keyword in forbidden:
-                assert (
-                    keyword not in name.lower()
-                ), f"MarketDataClient has forbidden method {name!r} containing {keyword!r}"
+                assert keyword not in name.lower(), (
+                    f"MarketDataClient has forbidden method {name!r} containing {keyword!r}"
+                )
 
     def test_no_api_key_required_for_download(self, api_client, mock_market_client):
         """Download endpoint must work without any API key."""

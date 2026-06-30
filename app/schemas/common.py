@@ -49,6 +49,21 @@ class EventLevel(StrEnum):
     CRITICAL = "CRITICAL"
 
 
+class ForwardSignalState(StrEnum):
+    WAIT = "WAIT"
+    BUY_PENDING = "BUY_PENDING"
+    LONG = "LONG"
+    SELL_PENDING = "SELL_PENDING"
+    EXITED = "EXITED"
+    ERROR_DATA_GAP = "ERROR_DATA_GAP"
+
+
+class ForwardLaunchStatus(StrEnum):
+    ACTIVE = "ACTIVE"
+    STOPPED = "STOPPED"
+    ERROR = "ERROR"
+
+
 class Interval(StrEnum):
     M1 = "1m"
     M3 = "3m"

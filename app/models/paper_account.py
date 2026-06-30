@@ -1,9 +1,11 @@
 from datetime import datetime
+from decimal import Decimal
 
-from sqlalchemy import DateTime, Numeric, String
+from sqlalchemy import DateTime, ForeignKey, String
 from sqlalchemy.orm import Mapped, mapped_column
 
 from app.database import Base
+from app.models.types import ExactDecimal
 
 
 class PaperAccount(Base):
@@ -11,13 +13,21 @@ class PaperAccount(Base):
 
     id: Mapped[int] = mapped_column(primary_key=True, autoincrement=True)
     # Quote asset balance (e.g. USDT)
-    balance: Mapped[str] = mapped_column(Numeric(30, 10), nullable=False)
+    balance: Mapped[Decimal] = mapped_column(ExactDecimal(), nullable=False)
     # Base asset balance (e.g. BTC) — held in open positions
-    asset_balance: Mapped[str] = mapped_column(Numeric(30, 10), nullable=False, default="0")
-    equity: Mapped[str] = mapped_column(Numeric(30, 10), nullable=False)
-    realized_pnl: Mapped[str] = mapped_column(Numeric(30, 10), nullable=False, default="0")
-    total_fees_paid: Mapped[str] = mapped_column(Numeric(30, 10), nullable=False, default="0")
+    asset_balance: Mapped[Decimal] = mapped_column(
+        ExactDecimal(), nullable=False, default=Decimal("0")
+    )
+    equity: Mapped[Decimal] = mapped_column(ExactDecimal(), nullable=False)
+    realized_pnl: Mapped[Decimal] = mapped_column(
+        ExactDecimal(), nullable=False, default=Decimal("0")
+    )
+    total_fees_paid: Mapped[Decimal] = mapped_column(
+        ExactDecimal(), nullable=False, default=Decimal("0")
+    )
     currency: Mapped[str] = mapped_column(String(10), nullable=False, default="USDT")
+    # Forward paper-trading launch that owns this account, if any
+    launch_id: Mapped[int | None] = mapped_column(ForeignKey("forward_launches.id"), nullable=True)
     updated_at: Mapped[datetime] = mapped_column(
         DateTime, default=datetime.utcnow, onupdate=datetime.utcnow, nullable=False
     )

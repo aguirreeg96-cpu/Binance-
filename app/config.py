@@ -122,6 +122,12 @@ class Settings(BaseSettings):
     market_data_max_requests: int = 500  # max pages per download job
     market_data_max_range_days: int = 365  # API validation guard
 
+    # Forward paper trading (Stage 6.1) — only initial capital, poll interval,
+    # and grace period may ever be changed; the frozen strategy config cannot.
+    forward_initial_capital: Decimal = Decimal("10000")
+    forward_poll_interval_seconds: int = 300
+    forward_data_gap_grace_seconds: int = 1800
+
     # Application
     app_host: str = "0.0.0.0"
     app_port: int = 8000

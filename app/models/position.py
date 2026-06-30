@@ -1,9 +1,11 @@
 from datetime import datetime
+from decimal import Decimal
 
-from sqlalchemy import DateTime, Index, Numeric, String
+from sqlalchemy import DateTime, ForeignKey, Index, String
 from sqlalchemy.orm import Mapped, mapped_column
 
 from app.database import Base
+from app.models.types import ExactDecimal
 from app.schemas.common import PositionStatus
 
 
@@ -14,17 +16,19 @@ class Position(Base):
     id: Mapped[int] = mapped_column(primary_key=True, autoincrement=True)
     symbol: Mapped[str] = mapped_column(String(20), nullable=False)
     status: Mapped[str] = mapped_column(String(10), nullable=False, default=PositionStatus.OPEN)
-    entry_price: Mapped[str] = mapped_column(Numeric(30, 10), nullable=False)
-    quantity: Mapped[str] = mapped_column(Numeric(30, 10), nullable=False)
-    stop_loss: Mapped[str] = mapped_column(Numeric(30, 10), nullable=False)
-    take_profit: Mapped[str] = mapped_column(Numeric(30, 10), nullable=False)
+    entry_price: Mapped[Decimal] = mapped_column(ExactDecimal(), nullable=False)
+    quantity: Mapped[Decimal] = mapped_column(ExactDecimal(), nullable=False)
+    stop_loss: Mapped[Decimal] = mapped_column(ExactDecimal(), nullable=False)
+    take_profit: Mapped[Decimal] = mapped_column(ExactDecimal(), nullable=False)
     trailing_stop_enabled: Mapped[bool] = mapped_column(default=False)
-    trailing_stop_price: Mapped[str | None] = mapped_column(Numeric(30, 10), nullable=True)
-    exit_price: Mapped[str | None] = mapped_column(Numeric(30, 10), nullable=True)
-    realized_pnl: Mapped[str | None] = mapped_column(Numeric(30, 10), nullable=True)
+    trailing_stop_price: Mapped[Decimal | None] = mapped_column(ExactDecimal(), nullable=True)
+    exit_price: Mapped[Decimal | None] = mapped_column(ExactDecimal(), nullable=True)
+    realized_pnl: Mapped[Decimal | None] = mapped_column(ExactDecimal(), nullable=True)
     opened_at: Mapped[datetime] = mapped_column(DateTime, nullable=False)
     closed_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
     signal_id: Mapped[int | None] = mapped_column(nullable=True)
+    # Forward paper-trading launch that opened this position, if any
+    launch_id: Mapped[int | None] = mapped_column(ForeignKey("forward_launches.id"), nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, nullable=False)
 
     def __repr__(self) -> str:

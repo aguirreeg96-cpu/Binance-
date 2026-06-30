@@ -155,9 +155,9 @@ class TestCalculatorPrecision:
             ):
                 v = getattr(r, field)
                 if v is not None:
-                    assert isinstance(
-                        v, Decimal
-                    ), f"Field {field} has type {type(v).__name__} (expected Decimal)"
+                    assert isinstance(v, Decimal), (
+                        f"Field {field} has type {type(v).__name__} (expected Decimal)"
+                    )
 
     def test_no_float_in_any_indicator(self):
         """Regression: float must never leak from division operations."""

@@ -1,9 +1,11 @@
 from datetime import datetime
+from decimal import Decimal
 
-from sqlalchemy import DateTime, Index, Numeric, String
+from sqlalchemy import DateTime, ForeignKey, Index, String
 from sqlalchemy.orm import Mapped, mapped_column
 
 from app.database import Base
+from app.models.types import ExactDecimal
 from app.schemas.common import OrderStatus
 
 
@@ -23,15 +25,21 @@ class Order(Base):
     status: Mapped[str] = mapped_column(
         String(30), nullable=False, default=OrderStatus.PENDING_APPROVAL
     )
-    price: Mapped[str | None] = mapped_column(Numeric(30, 10), nullable=True)
-    quantity: Mapped[str] = mapped_column(Numeric(30, 10), nullable=False)
-    filled_quantity: Mapped[str] = mapped_column(Numeric(30, 10), nullable=False, default="0")
-    avg_fill_price: Mapped[str | None] = mapped_column(Numeric(30, 10), nullable=True)
-    stop_price: Mapped[str | None] = mapped_column(Numeric(30, 10), nullable=True)
-    commission: Mapped[str] = mapped_column(Numeric(30, 10), nullable=False, default="0")
+    price: Mapped[Decimal | None] = mapped_column(ExactDecimal(), nullable=True)
+    quantity: Mapped[Decimal] = mapped_column(ExactDecimal(), nullable=False)
+    filled_quantity: Mapped[Decimal] = mapped_column(
+        ExactDecimal(), nullable=False, default=Decimal("0")
+    )
+    avg_fill_price: Mapped[Decimal | None] = mapped_column(ExactDecimal(), nullable=True)
+    stop_price: Mapped[Decimal | None] = mapped_column(ExactDecimal(), nullable=True)
+    commission: Mapped[Decimal] = mapped_column(
+        ExactDecimal(), nullable=False, default=Decimal("0")
+    )
     # Mode under which the order was created
     trading_mode: Mapped[str] = mapped_column(String(10), nullable=False)
     position_id: Mapped[int | None] = mapped_column(nullable=True)
+    # Forward paper-trading launch that created this order, if any
+    launch_id: Mapped[int | None] = mapped_column(ForeignKey("forward_launches.id"), nullable=True)
     # Approval tracking for DEMO mode
     approved_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
     rejected_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)

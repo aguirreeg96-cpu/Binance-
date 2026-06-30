@@ -1001,9 +1001,7 @@ def _print_timeframe_cost_comparison(report: "TimeframeCostReport") -> None:
 
     sep = "=" * 105
     print(f"\n{sep}")
-    print(
-        "  TIMEFRAME × COST ROBUSTNESS  " "(frozen: ENTRY_V3_ALIGNED_TREND + V2_STOP_ONLY @ 25 %)"
-    )
+    print("  TIMEFRAME × COST ROBUSTNESS  (frozen: ENTRY_V3_ALIGNED_TREND + V2_STOP_ONLY @ 25 %)")
     print(sep)
     print(
         "  Indicator periods NOT scaled across timeframes "
@@ -1104,13 +1102,9 @@ def _print_frozen_oos_2025(report: "FrozenOos2025Report") -> None:
     """Print the frozen OOS 2025 result table."""
     sep = "=" * 90
     print(f"\n{sep}")
-    print(
-        "  STAGE 5.3 — FROZEN OUT-OF-SAMPLE 2025  " "(ENTRY_V3_ALIGNED_TREND + V2_STOP_ONLY @ 25 %)"
-    )
+    print("  STAGE 5.3 — FROZEN OUT-OF-SAMPLE 2025  (ENTRY_V3_ALIGNED_TREND + V2_STOP_ONLY @ 25 %)")
     print(sep)
-    print(
-        "  Source: BTCUSDT 15m → 30m aggregated.  " "Period: 2025-01-01 to 2026-01-01 exclusively."
-    )
+    print("  Source: BTCUSDT 15m → 30m aggregated.  Period: 2025-01-01 to 2026-01-01 exclusively.")
     print("  PAPER/TEST only. No parameter modification after viewing this result.")
 
     print(
@@ -1204,11 +1198,9 @@ def _print_breakout_family(report: "BreakoutFamilyReport") -> None:
 
     sep = "=" * 100
     print(f"\n{sep}")
-    print("  STAGE 6.0 — DONCHIAN BREAKOUT FAMILY  " "(8 configs × 3 scenarios × 2021–2025)")
+    print("  STAGE 6.0 — DONCHIAN BREAKOUT FAMILY  (8 configs × 3 scenarios × 2021–2025)")
     print(sep)
-    print(
-        "  PAPER/TEST only. No real money. " "Do NOT modify configurations after viewing results."
-    )
+    print("  PAPER/TEST only. No real money. Do NOT modify configurations after viewing results.")
 
     # ---- Per-config compounded summary ----
     print(f"\n{sep}")

@@ -186,7 +186,7 @@ class DonchianBreakoutEngine:
         eval_candles = all_candles[warmup_len:]
         if not eval_candles:
             raise BacktestInsufficientDataError(
-                f"No evaluation candles " f"(total={len(all_candles)}, warmup={warmup_len})"
+                f"No evaluation candles (total={len(all_candles)}, warmup={warmup_len})"
             )
 
         dcfg = self.donchian_config

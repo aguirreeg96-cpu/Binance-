@@ -1,9 +1,11 @@
 from datetime import datetime
+from decimal import Decimal
 
-from sqlalchemy import DateTime, Index, Numeric, String
+from sqlalchemy import DateTime, ForeignKey, Index, String
 from sqlalchemy.orm import Mapped, mapped_column
 
 from app.database import Base
+from app.models.types import ExactDecimal
 
 
 class Trade(Base):
@@ -12,19 +14,21 @@ class Trade(Base):
 
     id: Mapped[int] = mapped_column(primary_key=True, autoincrement=True)
     symbol: Mapped[str] = mapped_column(String(20), nullable=False)
-    entry_price: Mapped[str] = mapped_column(Numeric(30, 10), nullable=False)
-    exit_price: Mapped[str] = mapped_column(Numeric(30, 10), nullable=False)
-    quantity: Mapped[str] = mapped_column(Numeric(30, 10), nullable=False)
+    entry_price: Mapped[Decimal] = mapped_column(ExactDecimal(), nullable=False)
+    exit_price: Mapped[Decimal] = mapped_column(ExactDecimal(), nullable=False)
+    quantity: Mapped[Decimal] = mapped_column(ExactDecimal(), nullable=False)
     side: Mapped[str] = mapped_column(String(10), nullable=False)
-    gross_pnl: Mapped[str] = mapped_column(Numeric(30, 10), nullable=False)
-    commission: Mapped[str] = mapped_column(Numeric(30, 10), nullable=False)
-    net_pnl: Mapped[str] = mapped_column(Numeric(30, 10), nullable=False)
+    gross_pnl: Mapped[Decimal] = mapped_column(ExactDecimal(), nullable=False)
+    commission: Mapped[Decimal] = mapped_column(ExactDecimal(), nullable=False)
+    net_pnl: Mapped[Decimal] = mapped_column(ExactDecimal(), nullable=False)
     # Risk/reward realized
-    planned_stop_loss: Mapped[str] = mapped_column(Numeric(30, 10), nullable=False)
-    planned_take_profit: Mapped[str] = mapped_column(Numeric(30, 10), nullable=False)
+    planned_stop_loss: Mapped[Decimal] = mapped_column(ExactDecimal(), nullable=False)
+    planned_take_profit: Mapped[Decimal] = mapped_column(ExactDecimal(), nullable=False)
     exit_reason: Mapped[str] = mapped_column(String(50), nullable=False)
     trading_mode: Mapped[str] = mapped_column(String(10), nullable=False)
     position_id: Mapped[int | None] = mapped_column(nullable=True)
+    # Forward paper-trading launch that produced this trade, if any
+    launch_id: Mapped[int | None] = mapped_column(ForeignKey("forward_launches.id"), nullable=True)
     opened_at: Mapped[datetime] = mapped_column(DateTime, nullable=False)
     closed_at: Mapped[datetime] = mapped_column(DateTime, nullable=False)
     created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, nullable=False)

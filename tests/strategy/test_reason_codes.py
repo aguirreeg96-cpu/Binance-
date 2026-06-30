@@ -14,9 +14,9 @@ from tests.strategy.conftest import (
 class TestReasonCodeCoverage:
     def test_all_reason_codes_have_descriptions(self):
         for code in ReasonCode:
-            assert (
-                code in REASON_DESCRIPTIONS
-            ), f"ReasonCode.{code.name} has no description in REASON_DESCRIPTIONS"
+            assert code in REASON_DESCRIPTIONS, (
+                f"ReasonCode.{code.name} has no description in REASON_DESCRIPTIONS"
+            )
 
     def test_descriptions_are_non_empty(self):
         for code, desc in REASON_DESCRIPTIONS.items():
