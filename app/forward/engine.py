@@ -196,6 +196,61 @@ class EvaluationOutcome:
     reasons: list[str]
 
 
+@dataclass(frozen=True)
+class CycleReport:
+    """Diagnostic snapshot from one engine cycle.
+
+    Always stored as ``engine.last_report`` after every ``run_cycle()`` call
+    (except when ``launch.status != ACTIVE``).  Callers — primarily the CLI —
+    use this to surface operator-facing info without re-querying the DB.
+
+    Policy documented here:
+    A 4h candle is eligible when ALL of the following are true:
+      1. Formed by exactly 16 closed, contiguous 15m candles.
+      2. ``open_time >= launch_timestamp``  ← fully forward; no pre-launch price action.
+      3. ``close_time <= now``              ← already closed at the time of evaluation.
+      4. No existing ForwardSignalEvaluation for this candle's close_time.
+
+    When the launch timestamp falls *inside* a 4h bucket (not at a UTC 4h
+    boundary), that bucket is intentionally excluded even if it has already
+    closed: part of its price action predates the launch and it is not a
+    genuinely forward candle.  ``skipped_partial_launch_candle`` records this.
+    The first eligible candle is the one that opens at the next 4h UTC boundary
+    after ``launch_timestamp``.
+    """
+
+    now_utc: datetime
+    """The ``now`` value passed to run_cycle(); naive UTC."""
+    launch_timestamp_utc: datetime
+    """The permanent launch timestamp; naive UTC."""
+    candles_15m_available: int
+    """Closed 15m candles in the DB for this symbol/interval."""
+    first_15m_open_utc: datetime | None
+    """Open time of the earliest stored 15m candle; naive UTC."""
+    last_15m_open_utc: datetime | None
+    """Open time of the most recent stored 15m candle; naive UTC."""
+    candles_4h_complete: int
+    """Fully-formed 4h buckets (16 contiguous closed 15m candles each)."""
+    last_4h_open_time: datetime | None
+    """Open time of the most recently assembled 4h candle; naive UTC."""
+    last_4h_close_time: datetime | None
+    """Close time of the most recently assembled 4h candle; naive UTC."""
+    last_evaluated_close: datetime | None
+    """close_time of the last 4h candle already in the DB; naive UTC."""
+    expected_next_open_utc: datetime | None
+    """open_time of the next expected 4h candle; naive UTC."""
+    skipped_partial_launch_candle: bool
+    """True when launch_timestamp is not at a 4h UTC boundary and no
+    evaluations have occurred yet.  The candle whose open_time < launch is
+    excluded on policy grounds (see class docstring)."""
+    next_eligible_4h_close_utc: datetime | None
+    """Approximate UTC close time of the next candle we are waiting for.
+    Set when evaluated_count == 0 because the next candle hasn't closed yet.
+    None when evaluations did occur this cycle."""
+    evaluated_count: int
+    """4h candles evaluated (and persisted to the DB) in this cycle."""
+
+
 def _resolve_signal_state(
     *, position_closed: bool, position_open: bool, buy_queued: bool, sell_queued: bool
 ) -> str:
@@ -238,15 +293,45 @@ class ForwardPaperEngine:
         self.repo = ForwardRepository(session)
         self.candle_repo = CandleRepository(session)
         self.data_gap_grace_seconds = data_gap_grace_seconds
+        self.last_report: CycleReport | None = None
 
     def run_cycle(self, launch: ForwardLaunch, now: datetime) -> list[EvaluationOutcome]:
         """Evaluate every closed 4h candle due since the last cycle, in order.
 
         Each candle's evaluation commits before the next one starts, so a
         crash mid-cycle resumes exactly where it left off on restart.
+
+        Eligibility policy (see CycleReport docstring for the full spec):
+          - open_time >= launch_timestamp  (fully forward; no pre-launch candles)
+          - close_time <= now              (already closed)
+          - not yet persisted in ForwardSignalEvaluation
+
+        When the launch timestamp falls inside a 4h bucket, that bucket is
+        excluded even after it closes.  The first eligible candle is the one
+        whose open_time equals the next 4h UTC boundary after launch_timestamp.
+        This decision is logged at INFO level and recorded in last_report so
+        operators can distinguish "waiting correctly" from a silent failure.
         """
+        # Reset on each call so stale data is never read after an inactive cycle.
+        self.last_report = None
+
         if launch.status != ForwardLaunchStatus.ACTIVE:
             return []
+
+        # --- Compute expected next candle BEFORE querying the DB ---
+        launch_ms = _to_ms(launch.launch_timestamp)
+        last_ms = (
+            _to_ms(launch.last_evaluated_candle_close)
+            if launch.last_evaluated_candle_close is not None
+            else None
+        )
+        expected_open_ms = (last_ms + 1) if last_ms is not None else _align_up_to_4h(launch_ms)
+
+        # Partial-launch-candle policy: when there are no evaluations yet AND
+        # the launch did not start exactly at a 4h UTC boundary, the candle
+        # whose open_time < launch_timestamp is excluded.  Its price action
+        # is not genuinely forward.  We skip to the next 4h boundary instead.
+        skipped_partial = last_ms is None and launch_ms % _FOUR_HOUR_MS != 0
 
         try:
             self.repo.recover(launch)
@@ -256,37 +341,121 @@ class ForwardPaperEngine:
 
         candles_15m = self.candle_repo.query(FORWARD_SYMBOL, FORWARD_SOURCE_INTERVAL)
         candles_4h = build_4h_candles(candles_15m)
-        if not candles_4h:
-            return []
 
-        launch_ms = _to_ms(launch.launch_timestamp)
-        last_ms = (
-            _to_ms(launch.last_evaluated_candle_close)
-            if launch.last_evaluated_candle_close is not None
-            else None
+        first_15m_ms = min((c.open_time for c in candles_15m), default=None)
+        last_15m_ms = max((c.open_time for c in candles_15m), default=None)
+        last_4h_open = _ms_to_dt(candles_4h[-1].open_time) if candles_4h else None
+        last_4h_close = _ms_to_dt(candles_4h[-1].close_time) if candles_4h else None
+        expected_next_open = _ms_to_dt(expected_open_ms)
+        next_eligible_close = _ms_to_dt(expected_open_ms + _FOUR_HOUR_MS)
+
+        logger.info(
+            "=== Forward Cycle | now=%s | launch=%s"
+            " | 15m: count=%d first=%s last=%s"
+            " | 4h: count=%d last=[%s → %s]"
+            " | last_eval=%s | expect_open=%s | skipped_partial=%s ===",
+            now.isoformat(),
+            launch.launch_timestamp.isoformat(),
+            len(candles_15m),
+            _ms_to_dt(first_15m_ms).isoformat() if first_15m_ms is not None else "none",
+            _ms_to_dt(last_15m_ms).isoformat() if last_15m_ms is not None else "none",
+            len(candles_4h),
+            last_4h_open.isoformat() if last_4h_open else "none",
+            last_4h_close.isoformat() if last_4h_close else "none",
+            launch.last_evaluated_candle_close.isoformat()
+            if launch.last_evaluated_candle_close
+            else "none",
+            expected_next_open.isoformat(),
+            skipped_partial,
         )
-        expected_open_ms = (last_ms + 1) if last_ms is not None else _align_up_to_4h(launch_ms)
+
+        if skipped_partial:
+            partial_open_ms = launch_ms - (launch_ms % _FOUR_HOUR_MS)
+            logger.info(
+                "  [policy] Partial launch candle excluded: open=%s < launch=%s."
+                " First eligible open=%s."
+                " That candle started before the launch — its price action is not"
+                " genuinely forward and is excluded from evaluation.",
+                _ms_to_dt(partial_open_ms).isoformat(),
+                launch.launch_timestamp.isoformat(),
+                expected_next_open.isoformat(),
+            )
+
+        def _build_report(evaluated_count: int, *, with_next_close: bool) -> CycleReport:
+            return CycleReport(
+                now_utc=now,
+                launch_timestamp_utc=launch.launch_timestamp,
+                candles_15m_available=len(candles_15m),
+                first_15m_open_utc=_ms_to_dt(first_15m_ms) if first_15m_ms is not None else None,
+                last_15m_open_utc=_ms_to_dt(last_15m_ms) if last_15m_ms is not None else None,
+                candles_4h_complete=len(candles_4h),
+                last_4h_open_time=last_4h_open,
+                last_4h_close_time=last_4h_close,
+                last_evaluated_close=launch.last_evaluated_candle_close,
+                expected_next_open_utc=expected_next_open,
+                skipped_partial_launch_candle=skipped_partial,
+                next_eligible_4h_close_utc=next_eligible_close if with_next_close else None,
+                evaluated_count=evaluated_count,
+            )
+
+        if not candles_4h:
+            logger.info("  No complete 4h candles available yet — waiting for data.")
+            self.last_report = _build_report(0, with_next_close=True)
+            return []
 
         index_by_open = {c.open_time: i for i, c in enumerate(candles_4h)}
         start_index = index_by_open.get(expected_open_ms)
 
         if start_index is None:
+            logger.info(
+                "  No new 4h candle to evaluate."
+                " expected_open=%s not yet in DB."
+                " skipped_partial_launch_candle=%s."
+                " next_eligible_4h_close=%s",
+                expected_next_open.isoformat(),
+                skipped_partial,
+                next_eligible_close.isoformat(),
+            )
             self._check_for_data_gap(launch, expected_open_ms, now)
+            self.last_report = _build_report(0, with_next_close=True)
             return []
+
+        eligible_count = len(candles_4h) - start_index
+        logger.info(
+            "  Evaluating %d 4h candle(s) starting at open=%s",
+            eligible_count,
+            _ms_to_dt(candles_4h[start_index].open_time).isoformat(),
+        )
 
         atrs = _compute_atr(candles_4h, FORWARD_DONCHIAN_CONFIG.atr_period)
         emas = _compute_ema([c.close for c in candles_4h], FORWARD_DONCHIAN_CONFIG.ema_period)
 
         outcomes: list[EvaluationOutcome] = []
         for all_i in range(start_index, len(candles_4h)):
+            candle = candles_4h[all_i]
+            logger.info(
+                "  [%d/%d] open=%s close=%s",
+                all_i - start_index + 1,
+                eligible_count,
+                _ms_to_dt(candle.open_time).isoformat(),
+                _ms_to_dt(candle.close_time).isoformat(),
+            )
             try:
                 outcome = self._evaluate_candle(launch, candles_4h, atrs, emas, all_i)
             except ForwardStateInconsistentError as exc:
                 self._handle_state_inconsistent(launch, exc)
                 break
             outcomes.append(outcome)
+            logger.info(
+                "  [%d/%d] → signal=%s reasons=%s",
+                all_i - start_index + 1,
+                eligible_count,
+                outcome.signal,
+                outcome.reasons,
+            )
             self.session.commit()
 
+        self.last_report = _build_report(len(outcomes), with_next_close=False)
         return outcomes
 
     def _handle_state_inconsistent(
@@ -317,7 +486,13 @@ class ForwardPaperEngine:
         expected_close_ms = expected_open_ms + _FOUR_HOUR_MS
         now_ms = _to_ms(now)
         if now_ms < expected_close_ms:
-            return  # candle isn't due yet — nothing to evaluate, no gap
+            logger.info(
+                "  Candle open=%s is not due yet (closes ~%s, now=%s) — waiting.",
+                _ms_to_dt(expected_open_ms).isoformat(),
+                _ms_to_dt(expected_close_ms).isoformat(),
+                _ms_to_dt(now_ms).isoformat(),
+            )
+            return
 
         elapsed_seconds = (now_ms - expected_close_ms) / 1000
         if elapsed_seconds <= self.data_gap_grace_seconds:

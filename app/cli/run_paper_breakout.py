@@ -38,16 +38,20 @@ def _now_naive_utc() -> datetime:
 
 
 async def _run_one_cycle(args: argparse.Namespace) -> int:
+    """Run one sync+evaluate cycle.
+
+    DB migrations are intentionally omitted here — they are applied once at
+    process startup inside main(), before the event loop begins, to avoid
+    Alembic noise on every polling iteration.
+    """
     from app.config import get_settings
-    from app.database import SessionLocal, run_migrations
+    from app.database import SessionLocal
     from app.forward.engine import ForwardPaperEngine, start_or_resume_launch
     from app.forward.exceptions import ForwardConfigMismatchError
     from app.forward.sync import sync_forward_candles
     from app.market_data.client import BinanceMarketDataClient
 
     settings = get_settings()
-    logger.info("Running DB migrations...")
-    run_migrations()
 
     with SessionLocal() as session:
         try:
@@ -74,20 +78,45 @@ async def _run_one_cycle(args: argparse.Namespace) -> int:
 
         if sync_result is not None:
             logger.info(
-                "Synced %d new 15m candles (requests=%d).",
+                "Sync | inserted=%d updated=%d ignored=%d requests=%d | range=[%s, %s]",
                 sync_result.inserted,
+                sync_result.updated,
+                sync_result.ignored,
                 sync_result.requests_made,
+                sync_result.first_open_time.isoformat() if sync_result.first_open_time else "n/a",
+                sync_result.last_open_time.isoformat() if sync_result.last_open_time else "n/a",
             )
+        else:
+            logger.info("Sync: already up to date — no new candles fetched.")
 
         engine = ForwardPaperEngine(
             session, data_gap_grace_seconds=settings.forward_data_gap_grace_seconds
         )
         outcomes = engine.run_cycle(launch, _now_naive_utc())
+        report = engine.last_report
         session.refresh(launch)
 
     print(f"Launch id={launch.id} status={launch.status} evaluations_this_cycle={len(outcomes)}")
     for outcome in outcomes:
         print(f"  {outcome.candle_close_time.isoformat()}  {outcome.signal}  {outcome.reasons}")
+
+    if report is not None:
+        if report.skipped_partial_launch_candle:
+            print(
+                f"  skipped_partial_launch_candle=true"
+                f" (launch {report.launch_timestamp_utc.isoformat()}Z is not at a 4h UTC"
+                f" boundary; the partially-elapsed candle is excluded)"
+            )
+        if report.next_eligible_4h_close_utc is not None:
+            print(
+                f"  next_eligible_4h_close={report.next_eligible_4h_close_utc.isoformat()}Z"
+                f" (approx)"
+            )
+        print(
+            f"  candles_15m={report.candles_15m_available}"
+            f" | candles_4h={report.candles_4h_complete}"
+        )
+
     return 0
 
 
@@ -142,6 +171,14 @@ def main() -> None:
     print(_WARNING)
     parser = _build_parser()
     args = parser.parse_args()
+
+    # Run DB migrations exactly ONCE at startup, before the event loop starts.
+    # Continuous mode polls _run_one_cycle() repeatedly; running migrations on
+    # every poll would produce Alembic noise and slow down each cycle.
+    from app.database import run_migrations
+
+    logger.info("Running DB migrations...")
+    run_migrations()
 
     if args.once:
         rc = asyncio.run(_run_one_cycle(args))

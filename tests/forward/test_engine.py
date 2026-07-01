@@ -14,7 +14,12 @@ from datetime import timedelta
 from decimal import Decimal
 
 from app.backtesting.execution import compute_buy
-from app.forward.engine import ForwardPaperEngine, build_4h_candles, start_or_resume_launch
+from app.forward.engine import (
+    CycleReport,
+    ForwardPaperEngine,
+    build_4h_candles,
+    start_or_resume_launch,
+)
 from app.forward.manifest import FORWARD_FEE_PERCENTAGE, FORWARD_SLIPPAGE_PERCENTAGE
 from app.models.types import normalize_decimal
 from app.repositories.forward_repository import ForwardRepository
@@ -392,3 +397,191 @@ class TestArchitectureGuard:
             content = f.read()
         assert "BinanceMarketDataClient" not in content
         assert "httpx" not in content
+
+
+# ---------------------------------------------------------------------------
+# Partial-launch-candle policy and CycleReport diagnostics
+# ---------------------------------------------------------------------------
+
+
+class TestPartialLaunchCandle:
+    """Verify the policy: only 4h candles whose open_time >= launch_timestamp
+    are ever evaluated.
+
+    When a launch occurs in the middle of a 4h bucket, that bucket is excluded
+    — even after it closes — because part of its price action predates the
+    launch and the candle is not genuinely forward.  The first eligible candle
+    is the one that opens at the next 4h UTC boundary after launch_timestamp.
+    This mirrors the real-world scenario that triggered the bug report:
+
+      Launch at ~23:09 UTC (20:09 Argentina), mid-way through the 20:00–00:00
+      UTC candle.  That candle closes at 00:00 UTC, but its open_time (20:00
+      UTC) is before the launch, so it is correctly excluded.  The next eligible
+      candle opens at 00:00 UTC (July 1) and closes at 04:00 UTC.  Any run
+      before 04:00 UTC produces evaluations_this_cycle=0, which is CORRECT, not
+      a bug.  The CycleReport makes this explicit.
+    """
+
+    def test_launch_mid_candle_skips_partial_and_evaluates_next(
+        self, db_session, breakout_scenario
+    ):
+        """Launch 1 h into candle N_WARMUP_FLAT → that candle is skipped; first
+        evaluation is the following candle (N_WARMUP_FLAT + 1)."""
+        db_session.add_all(breakout_scenario.sub_candles)
+        db_session.commit()
+
+        mid = breakout_scenario.open_time_4h(N_WARMUP_FLAT) + timedelta(hours=1)
+        launch = start_or_resume_launch(db_session, now=mid, initial_capital=Decimal("10000"))
+
+        engine = ForwardPaperEngine(db_session)
+        now = breakout_scenario.close_time_4h(len(breakout_scenario.prices) - 1) + timedelta(
+            seconds=1
+        )
+        outcomes = engine.run_cycle(launch, now)
+
+        assert outcomes  # at least one evaluation happened
+        assert engine.last_report is not None
+        assert engine.last_report.skipped_partial_launch_candle is True
+        # First evaluated candle must be N_WARMUP_FLAT + 1 (the first fully forward one)
+        assert outcomes[0].candle_close_time == breakout_scenario.close_time_4h(N_WARMUP_FLAT + 1)
+
+    def test_no_skip_when_launch_at_4h_boundary(
+        self, db_session, seeded_session, breakout_scenario
+    ):
+        """Launch exactly at a 4h UTC boundary → skipped_partial_launch_candle=False."""
+        launch = _launch_at(db_session, breakout_scenario, N_WARMUP_FLAT)
+        engine = ForwardPaperEngine(db_session)
+        now = breakout_scenario.close_time_4h(N_WARMUP_FLAT) + timedelta(seconds=1)
+        engine.run_cycle(launch, now)
+
+        assert engine.last_report is not None
+        assert engine.last_report.skipped_partial_launch_candle is False
+
+    def test_next_eligible_close_set_when_candle_not_due_yet(self, db_session, breakout_scenario):
+        """next_eligible_4h_close_utc is populated when the expected candle hasn't closed yet."""
+        # Add only warm-up candles (0 .. N_WARMUP_FLAT-1); candle N_WARMUP_FLAT not in DB.
+        cutoff_open_ms = breakout_scenario.open_times_4h[N_WARMUP_FLAT]
+        partial = [c for c in breakout_scenario.sub_candles if c.open_time < cutoff_open_ms]
+        db_session.add_all(partial)
+        db_session.commit()
+
+        launch = _launch_at(db_session, breakout_scenario, N_WARMUP_FLAT)
+        engine = ForwardPaperEngine(db_session)
+
+        # "now" is 1 hour into candle N_WARMUP_FLAT — it hasn't closed yet.
+        now = breakout_scenario.open_time_4h(N_WARMUP_FLAT) + timedelta(hours=1)
+        outcomes = engine.run_cycle(launch, now)
+
+        assert outcomes == []
+        report = engine.last_report
+        assert report is not None
+        assert report.next_eligible_4h_close_utc is not None
+        # next_eligible_close should be ~4 h after the expected open
+        expected_open = breakout_scenario.open_time_4h(N_WARMUP_FLAT)
+        assert report.next_eligible_4h_close_utc == expected_open + timedelta(hours=4)
+
+    def test_evaluated_count_in_report_matches_outcomes(
+        self, db_session, seeded_session, breakout_scenario
+    ):
+        """CycleReport.evaluated_count equals len(outcomes)."""
+        launch = _launch_at(db_session, breakout_scenario, N_WARMUP_FLAT)
+        engine = ForwardPaperEngine(db_session)
+        now = breakout_scenario.close_time_4h(len(breakout_scenario.prices) - 1) + timedelta(
+            seconds=1
+        )
+        outcomes = engine.run_cycle(launch, now)
+
+        assert engine.last_report is not None
+        assert engine.last_report.evaluated_count == len(outcomes)
+        assert engine.last_report.evaluated_count > 0
+        assert engine.last_report.candles_4h_complete == len(breakout_scenario.prices)
+        assert isinstance(engine.last_report, CycleReport)
+
+    def test_report_next_eligible_close_none_after_evaluation(
+        self, db_session, seeded_session, breakout_scenario
+    ):
+        """next_eligible_4h_close_utc is None when evaluations did occur."""
+        launch = _launch_at(db_session, breakout_scenario, N_WARMUP_FLAT)
+        engine = ForwardPaperEngine(db_session)
+        now = breakout_scenario.close_time_4h(len(breakout_scenario.prices) - 1) + timedelta(
+            seconds=1
+        )
+        outcomes = engine.run_cycle(launch, now)
+
+        assert len(outcomes) > 0
+        assert engine.last_report is not None
+        assert engine.last_report.next_eligible_4h_close_utc is None
+
+    def test_restart_preserves_launch_id_and_timestamp(self, db_session, breakout_scenario):
+        """start_or_resume_launch is idempotent: same id and timestamp on every call."""
+        db_session.add_all(breakout_scenario.sub_candles)
+        db_session.commit()
+
+        launch_time = breakout_scenario.open_time_4h(N_WARMUP_FLAT)
+        launch1 = start_or_resume_launch(
+            db_session, now=launch_time, initial_capital=Decimal("10000")
+        )
+        id1, ts1 = launch1.id, launch1.launch_timestamp
+
+        later = breakout_scenario.open_time_4h(N_WARMUP_FLAT + 10)
+        launch2 = start_or_resume_launch(db_session, now=later, initial_capital=Decimal("10000"))
+        assert launch2.id == id1
+        assert launch2.launch_timestamp == ts1
+
+    def test_utc_alignment_holds_for_various_mid_candle_offsets(
+        self, db_session, breakout_scenario
+    ):
+        """Whatever time within a 4h bucket the launch occurs, the first eligible
+        candle always aligns to the next 4h UTC boundary."""
+        db_session.add_all(breakout_scenario.sub_candles)
+        db_session.commit()
+
+        for offset_hours in (1, 2, 3):
+            mid = breakout_scenario.open_time_4h(N_WARMUP_FLAT) + timedelta(hours=offset_hours)
+            # Fresh DB state not possible within one test; just verify the launch time
+            # the engine would use (expected_open) aligns to a 4h boundary.
+            from app.forward.engine import _FOUR_HOUR_MS, _align_up_to_4h, _to_ms
+
+            launch_ms = _to_ms(mid)
+            aligned = _align_up_to_4h(launch_ms)
+            assert aligned % _FOUR_HOUR_MS == 0, f"Not 4h-aligned for offset={offset_hours}h"
+            assert aligned > launch_ms, "Must snap to a FUTURE boundary"
+
+    def test_diagnostic_log_emitted_each_cycle(
+        self, db_session, seeded_session, breakout_scenario, caplog
+    ):
+        """Engine emits at least one INFO log per cycle for operator auditing."""
+        import logging
+
+        launch = _launch_at(db_session, breakout_scenario, N_WARMUP_FLAT)
+        engine = ForwardPaperEngine(db_session)
+        now = breakout_scenario.close_time_4h(N_WARMUP_FLAT) + timedelta(seconds=1)
+
+        with caplog.at_level(logging.INFO, logger="app.forward.engine"):
+            engine.run_cycle(launch, now)
+
+        assert any("Cycle" in r.message for r in caplog.records)
+        assert any("15m" in r.message for r in caplog.records)
+        assert any("4h" in r.message for r in caplog.records)
+        assert any("expect_open" in r.message for r in caplog.records)
+
+    def test_partial_skip_logged_when_launch_mid_candle(
+        self, db_session, breakout_scenario, caplog
+    ):
+        """The policy log line is emitted when skipped_partial_launch_candle=True."""
+        import logging
+
+        db_session.add_all(breakout_scenario.sub_candles)
+        db_session.commit()
+
+        mid = breakout_scenario.open_time_4h(N_WARMUP_FLAT) + timedelta(hours=1)
+        launch = start_or_resume_launch(db_session, now=mid, initial_capital=Decimal("10000"))
+        engine = ForwardPaperEngine(db_session)
+        now = breakout_scenario.close_time_4h(len(breakout_scenario.prices) - 1) + timedelta(
+            seconds=1
+        )
+
+        with caplog.at_level(logging.INFO, logger="app.forward.engine"):
+            engine.run_cycle(launch, now)
+
+        assert any("policy" in r.message.lower() for r in caplog.records)
