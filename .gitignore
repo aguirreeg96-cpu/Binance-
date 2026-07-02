@@ -50,3 +50,9 @@ exports/
 
 # MyPy
 .mypy_cache/
+
+# Claude Code internal (worktrees, session state)
+.claude/
+
+# Runtime state (process PIDs, backups, app logs)
+runtime/
