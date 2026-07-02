@@ -1,8 +1,10 @@
 import logging
 from collections.abc import AsyncGenerator
 from contextlib import asynccontextmanager
+from pathlib import Path
 
 from fastapi import FastAPI
+from fastapi.staticfiles import StaticFiles
 
 from app.config import get_settings
 from app.database import run_migrations, verify_db_connection
@@ -79,12 +81,18 @@ def create_app() -> FastAPI:
     from app.api.market_data import router as market_data_router
     from app.api.paper_breakout import router as paper_breakout_router
     from app.api.strategy import router as strategy_router
+    from app.dashboard.router import router as dashboard_router
 
     app.include_router(market_data_router)
     app.include_router(indicators_router)
     app.include_router(strategy_router)
     app.include_router(backtesting_router)
     app.include_router(paper_breakout_router)
+    app.include_router(dashboard_router)
+
+    # Static files for the dashboard (CSS, JS)
+    _static_dir = Path(__file__).parent / "dashboard" / "static"
+    app.mount("/dashboard/static", StaticFiles(directory=str(_static_dir)), name="dashboard-static")
 
     @app.get("/health", tags=["system"])
     async def health() -> dict[str, str]:

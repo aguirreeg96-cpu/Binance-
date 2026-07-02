@@ -1,0 +1,239 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <meta http-equiv="X-UA-Compatible" content="IE=edge">
+  <title>Paper Trading Dashboard — BTCUSDT</title>
+  <link rel="stylesheet" href="/dashboard/static/dashboard.css">
+  <meta name="robots" content="noindex,nofollow">
+</head>
+<body>
+
+<!-- ============================================================ Header -->
+<header class="dash-header" role="banner">
+  <div class="header-brand">
+    <div class="header-title">Paper Trading Dashboard</div>
+    <div class="header-subtitle">Estrategia B_4h · BTCUSDT · 4h · Solo simulación</div>
+  </div>
+
+  <div class="header-meta" role="status" aria-live="polite">
+    <span class="badge-paper">PAPER</span>
+    <span id="launch-status-badge" class="badge-status badge-unknown">CARGANDO</span>
+  </div>
+
+  <div class="header-controls">
+    <span id="last-updated" class="last-updated" aria-live="polite"></span>
+    <span id="update-indicator" class="update-indicator" aria-live="polite"></span>
+    <button id="btn-refresh" class="btn-primary" type="button" onclick="refreshDashboard()"
+            aria-label="Actualizar datos ahora">Actualizar</button>
+  </div>
+</header>
+
+<!-- ============================================================ Error banner -->
+<div id="error-banner" class="error-banner" role="alert" aria-live="assertive" style="display:none"></div>
+
+<!-- ============================================================ Warnings bar -->
+<div id="warnings-bar" class="warnings-bar" role="alert" aria-live="polite" style="display:none"></div>
+
+<!-- ============================================================ Main content -->
+<main class="main-content" aria-label="Dashboard de paper trading">
+
+  <!-- ── 1. Summary cards ──────────────────────────────────────────────── -->
+  <section class="section" aria-labelledby="section-summary">
+    <h2 class="section-title" id="section-summary">Resumen</h2>
+    <div class="cards-grid" role="list">
+
+      <div class="card" role="listitem">
+        <div class="card-label">Señal actual</div>
+        <div id="card-signal" class="card-value" aria-label="Señal actual">—</div>
+      </div>
+
+      <div class="card" role="listitem">
+        <div class="card-label">Balance</div>
+        <div id="card-balance" class="card-value">—</div>
+        <div class="card-unit">USDT</div>
+      </div>
+
+      <div class="card" role="listitem">
+        <div class="card-label">Equity</div>
+        <div id="card-equity" class="card-value">—</div>
+        <div class="card-unit">USDT</div>
+      </div>
+
+      <div class="card" role="listitem">
+        <div class="card-label">PnL realizado</div>
+        <div id="card-pnl" class="card-value">—</div>
+        <div class="card-unit">USDT</div>
+        <div id="card-pnl-pct" class="card-sub">—</div>
+      </div>
+
+      <div class="card" role="listitem">
+        <div class="card-label">Posición abierta</div>
+        <div id="card-position" class="card-value">—</div>
+      </div>
+
+      <div class="card" role="listitem">
+        <div class="card-label">Trades cerrados</div>
+        <div id="card-trades-count" class="card-value">0</div>
+      </div>
+
+      <div class="card" role="listitem">
+        <div class="card-label">Win rate</div>
+        <div id="card-winrate" class="card-value">—</div>
+      </div>
+
+    </div>
+  </section>
+
+  <!-- ── 2. Current evaluation ─────────────────────────────────────────── -->
+  <section class="section" aria-labelledby="section-eval">
+    <h2 class="section-title" id="section-eval">Evaluación actual</h2>
+    <div id="current-eval" class="eval-grid" aria-live="polite">
+      <p class="empty-state">Cargando…</p>
+    </div>
+  </section>
+
+  <!-- ── 3. Open position ──────────────────────────────────────────────── -->
+  <section class="section" aria-labelledby="section-position">
+    <h2 class="section-title" id="section-position">Posición virtual abierta</h2>
+    <div id="position-container" aria-live="polite">
+      <p class="empty-state">Cargando…</p>
+    </div>
+  </section>
+
+  <!-- ── 4. Signal history ─────────────────────────────────────────────── -->
+  <section class="section" aria-labelledby="section-signals">
+    <h2 class="section-title" id="section-signals">
+      Historial de señales
+      <div class="section-controls">
+        <label for="signal-filter" class="sr-only">Filtrar por tipo de señal</label>
+        <select id="signal-filter" class="btn-secondary"
+                onchange="filterSignals(this.value)"
+                aria-label="Filtrar señales por tipo">
+          <option value="">Todas las señales</option>
+          <option value="WAIT">WAIT</option>
+          <option value="BUY_PENDING">BUY_PENDING</option>
+          <option value="LONG">LONG</option>
+          <option value="SELL_PENDING">SELL_PENDING</option>
+          <option value="EXITED">EXITED</option>
+          <option value="ERROR_DATA_GAP">ERROR_DATA_GAP</option>
+        </select>
+        <button class="btn-secondary" type="button" onclick="exportSignals()"
+                aria-label="Descargar historial de señales como CSV">Exportar CSV</button>
+      </div>
+    </h2>
+    <div class="table-wrapper" role="region" aria-label="Historial de señales">
+      <table class="data-table" aria-label="Evaluaciones de señales">
+        <thead>
+          <tr>
+            <th scope="col">Vela (UTC)</th>
+            <th scope="col">Hora local</th>
+            <th scope="col">Señal</th>
+            <th scope="col">Razones</th>
+            <th scope="col">Precio</th>
+            <th scope="col">Entr. Donchian</th>
+            <th scope="col">Sal. Donchian</th>
+            <th scope="col">ATR</th>
+            <th scope="col">Equity</th>
+          </tr>
+        </thead>
+        <tbody id="signals-tbody" aria-live="polite">
+          <tr><td colspan="9" class="empty-cell">Cargando…</td></tr>
+        </tbody>
+      </table>
+    </div>
+  </section>
+
+  <!-- ── 5. Trade history ──────────────────────────────────────────────── -->
+  <section class="section" aria-labelledby="section-trades">
+    <h2 class="section-title" id="section-trades">
+      Historial de trades cerrados
+      <div class="section-controls">
+        <button class="btn-secondary" type="button" onclick="exportTrades()"
+                aria-label="Descargar historial de trades como CSV">Exportar CSV</button>
+      </div>
+    </h2>
+    <p id="trades-empty" class="empty-state" style="display:none">
+      Sin trades cerrados todavía. Recuerda: se requieren al menos 20 trades para
+      evaluar el rendimiento real de la estrategia.
+    </p>
+    <div id="trades-table-wrapper" class="table-wrapper" role="region" aria-label="Historial de trades" style="display:none">
+      <table class="data-table" aria-label="Trades cerrados">
+        <thead>
+          <tr>
+            <th scope="col">ID</th>
+            <th scope="col">Apertura (UTC)</th>
+            <th scope="col">Cierre (UTC)</th>
+            <th scope="col">Entrada</th>
+            <th scope="col">Salida</th>
+            <th scope="col">Cantidad</th>
+            <th scope="col">Bruto</th>
+            <th scope="col">Comisión</th>
+            <th scope="col">Neto</th>
+            <th scope="col">Retorno %</th>
+            <th scope="col">Razón salida</th>
+            <th scope="col">Duración</th>
+          </tr>
+        </thead>
+        <tbody id="trades-tbody" aria-live="polite">
+        </tbody>
+      </table>
+    </div>
+  </section>
+
+  <!-- ── 6. Equity curve ───────────────────────────────────────────────── -->
+  <section class="section" aria-labelledby="section-equity">
+    <h2 class="section-title" id="section-equity">
+      Curva de equity
+      <div class="section-controls">
+        <button class="btn-secondary" type="button" onclick="exportEquity()"
+                aria-label="Descargar curva de equity como CSV">Exportar CSV</button>
+      </div>
+    </h2>
+    <div id="equity-chart-container" aria-live="polite">
+      <p class="empty-state">Cargando…</p>
+    </div>
+  </section>
+
+  <!-- ── 7. Frozen config ──────────────────────────────────────────────── -->
+  <section class="section" aria-labelledby="section-config">
+    <h2 class="section-title" id="section-config">
+      Configuración congelada (inmutable)
+      <div class="section-controls">
+        <button class="btn-secondary" type="button" onclick="exportManifest()"
+                aria-label="Descargar configuración como JSON">Exportar JSON</button>
+      </div>
+    </h2>
+    <div class="alert-info" role="note">
+      Esta configuración fue fijada en el momento del lanzamiento y no puede
+      modificarse sin reiniciar el forward test. No se considera dinero real
+      hasta alcanzar al menos 20 trades cerrados.
+    </div>
+    <div id="frozen-config-grid" class="config-grid" aria-live="polite">
+      <p class="empty-state">Cargando…</p>
+    </div>
+  </section>
+
+  <!-- ── 8. System status ──────────────────────────────────────────────── -->
+  <section class="section" aria-labelledby="section-system">
+    <h2 class="section-title" id="section-system">Estado del sistema</h2>
+    <div id="system-status-grid" class="status-grid" aria-live="polite">
+      <p class="empty-state">Cargando…</p>
+    </div>
+  </section>
+
+</main>
+
+<!-- ============================================================ Footer -->
+<footer class="dash-footer" role="contentinfo">
+  <p>
+    &#9888; <strong>SOLO SIMULACIÓN — PAPER TRADING</strong> &#9888;<br>
+    Esta aplicación es únicamente para fines educativos. No se utiliza dinero real.<br>
+    Las señales pasadas no predicen resultados futuros. El trading conlleva riesgo significativo de pérdida.
+  </p>
+</footer>
+
+<script src="/dashboard/static/dashboard.js"></script>
+</body>
+</html>
