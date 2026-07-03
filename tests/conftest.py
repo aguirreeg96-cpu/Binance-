@@ -7,18 +7,20 @@ alembic_session — function-scoped fresh temp-file DB migrated via alembic upgr
 """
 
 import pytest
-from alembic.config import Config
 from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
 
 from alembic import command
+from alembic.config import Config
 from app.database import Base
 from app.models import (  # noqa: F401 — register all models
     candle,
     daily_risk_state,
     forward_paper,
+    heartbeat,
     order,
     paper_account,
+    paper_event,
     position,
     signal,
     strategy_config,

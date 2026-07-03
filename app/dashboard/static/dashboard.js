@@ -6,23 +6,31 @@
 
 const API = '/api/v1/paper-breakout';
 const REFRESH_MS = 30_000;
+const EVENTS_POLL_MS = 15_000;
 
 let _data = null;         // last successfully fetched dashboard summary
 let _fetching = false;
 let _refreshTimer = null;
 let _allSignals = [];     // full signals list for client-side filter
 let _signalFilter = '';
+let _lastSeenEventId = 0;
+let _eventsTimer = null;
 
 /* ------------------------------------------------------------------ init */
 
 document.addEventListener('DOMContentLoaded', () => {
   fetchDashboard();
+  fetchHealth();
+  fetchEvents();
   _refreshTimer = setInterval(fetchDashboard, REFRESH_MS);
+  _eventsTimer = setInterval(() => { fetchHealth(); fetchEvents(); }, EVENTS_POLL_MS);
 });
 
 function refreshDashboard() {
   clearInterval(_refreshTimer);
   fetchDashboard();
+  fetchHealth();
+  fetchEvents();
   _refreshTimer = setInterval(fetchDashboard, REFRESH_MS);
 }
 
@@ -714,3 +722,173 @@ function exportSignals()  { window.location.href = API + '/signals/export'; }
 function exportTrades()   { window.location.href = API + '/trades/export'; }
 function exportEquity()   { window.location.href = API + '/equity/export'; }
 function exportManifest() { window.location.href = API + '/config/export'; }
+function exportDiagnostic() { window.location.href = API + '/diagnostic'; }
+
+/* --------------------------------------------------------- health fetch */
+
+async function fetchHealth() {
+  try {
+    const res = await fetch('/health');
+    if (!res.ok) return;
+    const data = await res.json();
+    renderHealthStatus(data);
+  } catch (_) {
+    // Health fetch failure is non-fatal
+  }
+}
+
+function renderHealthStatus(h) {
+  const container = document.getElementById('health-container');
+  if (!container) return;
+  container.textContent = '';
+
+  const statusColors = { HEALTHY: 'status-ok', DEGRADED: 'status-warn', ERROR: 'status-err' };
+  const cls = statusColors[h.status] || '';
+
+  const badge = document.createElement('div');
+  badge.className = 'health-badge ' + cls;
+  badge.textContent = h.status;
+  container.appendChild(badge);
+
+  const grid = document.createElement('div');
+  grid.className = 'status-grid';
+
+  const items = [
+    { label: 'Base de datos', value: h.db_status, cls: h.db_status === 'ok' ? 'status-ok' : 'status-err' },
+    { label: 'Launch', value: h.launch_status, cls: h.launch_status === 'ACTIVE' ? 'status-ok' : 'status-warn' },
+    { label: 'Heartbeat', value: h.heartbeat_status, cls: h.heartbeat_status === 'active' ? 'status-ok' : (h.heartbeat_status === 'idle' ? '' : 'status-warn') },
+    { label: 'Datos', value: h.data_freshness, cls: h.data_freshness === 'fresh' ? 'status-ok' : 'status-warn' },
+    { label: 'Último ciclo', value: h.last_heartbeat_result || '—', cls: h.last_heartbeat_result === 'OK' ? 'status-ok' : (h.last_heartbeat_result === 'ERROR' ? 'status-err' : '') },
+    { label: 'Edad heartbeat', value: h.heartbeat_age_seconds != null ? (h.heartbeat_age_seconds / 60).toFixed(1) + ' min' : '—', cls: '' },
+    { label: 'Edad datos (h)', value: h.last_candle_age_hours != null ? h.last_candle_age_hours.toFixed(1) + 'h' : '—', cls: '' },
+    { label: 'Verificado (UTC)', value: h.checked_at || '—', cls: '' },
+  ];
+
+  items.forEach(({ label, value, cls }) => {
+    const item = document.createElement('div');
+    item.className = 'status-item';
+    const lbl = document.createElement('div');
+    lbl.className = 'status-label';
+    lbl.textContent = label;
+    const val = document.createElement('div');
+    val.className = 'status-value' + (cls ? ' ' + cls : '');
+    val.textContent = value;
+    item.appendChild(lbl);
+    item.appendChild(val);
+    grid.appendChild(item);
+  });
+  container.appendChild(grid);
+
+  if (h.issues && h.issues.length > 0) {
+    const issueList = document.createElement('ul');
+    issueList.className = 'health-issues';
+    h.issues.forEach(issue => {
+      const li = document.createElement('li');
+      li.textContent = issue;
+      issueList.appendChild(li);
+    });
+    container.appendChild(issueList);
+  }
+}
+
+/* --------------------------------------------------------- events fetch */
+
+async function fetchEvents() {
+  try {
+    const res = await fetch(API + '/events/unread');
+    if (!res.ok) return;
+    const events = await res.json();
+    renderEvents(events);
+    _notifyNewEvents(events);
+  } catch (_) {
+    // Events fetch failure is non-fatal
+  }
+}
+
+function renderEvents(events) {
+  const container = document.getElementById('events-container');
+  if (!container) return;
+  container.textContent = '';
+
+  if (!events || events.length === 0) {
+    const p = document.createElement('p');
+    p.className = 'empty-state';
+    p.textContent = 'No hay eventos sin leer.';
+    container.appendChild(p);
+    return;
+  }
+
+  const list = document.createElement('div');
+  list.className = 'events-list';
+
+  events.forEach(ev => {
+    const item = document.createElement('div');
+    item.className = 'event-item sev-' + (ev.severity || 'INFO').toLowerCase();
+
+    const header = document.createElement('div');
+    header.className = 'event-header';
+
+    const type = document.createElement('span');
+    type.className = 'event-type';
+    type.textContent = ev.event_type;
+
+    const ts = document.createElement('span');
+    ts.className = 'event-ts';
+    ts.textContent = ev.timestamp_utc;
+
+    const btn = document.createElement('button');
+    btn.className = 'btn-secondary btn-xs';
+    btn.type = 'button';
+    btn.textContent = 'Marcar leído';
+    btn.addEventListener('click', () => markEventRead(ev.id));
+
+    header.appendChild(type);
+    header.appendChild(ts);
+    header.appendChild(btn);
+
+    const msg = document.createElement('div');
+    msg.className = 'event-msg';
+    msg.textContent = ev.message;
+
+    item.appendChild(header);
+    item.appendChild(msg);
+    list.appendChild(item);
+  });
+
+  container.appendChild(list);
+}
+
+async function markEventRead(eventId) {
+  try {
+    await fetch(API + '/events/' + eventId + '/read', { method: 'POST' });
+    fetchEvents();
+  } catch (_) {}
+}
+
+/* ------------------------------------------------ browser notifications */
+
+function requestNotificationPermission() {
+  if (!('Notification' in window)) {
+    alert('Tu navegador no soporta notificaciones.');
+    return;
+  }
+  Notification.requestPermission().then(perm => {
+    const btn = document.getElementById('btn-notifications');
+    if (btn) {
+      btn.textContent = perm === 'granted' ? 'Notificaciones activas' : 'Notificaciones bloqueadas';
+    }
+  });
+}
+
+function _notifyNewEvents(events) {
+  if (!('Notification' in window) || Notification.permission !== 'granted') return;
+  events.forEach(ev => {
+    if (ev.id > _lastSeenEventId) {
+      _lastSeenEventId = ev.id;
+      new Notification('Paper Trading — ' + ev.event_type, {  // eslint-disable-line no-new
+        body: ev.message,
+        tag: 'paper-ev-' + ev.id,
+      });
+    }
+  });
+}

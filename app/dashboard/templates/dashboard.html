@@ -223,6 +223,37 @@
     </div>
   </section>
 
+  <!-- ── 9. Health status ──────────────────────────────────────────────── -->
+  <section class="section" aria-labelledby="section-health">
+    <h2 class="section-title" id="section-health">
+      Estado de salud
+      <div class="section-controls">
+        <button class="btn-secondary" type="button" onclick="exportDiagnostic()"
+                aria-label="Descargar diagnóstico completo">Descargar diagnóstico</button>
+      </div>
+    </h2>
+    <div id="health-container" aria-live="polite">
+      <p class="empty-state">Cargando…</p>
+    </div>
+  </section>
+
+  <!-- ── 10. Events center ─────────────────────────────────────────────── -->
+  <section class="section" aria-labelledby="section-events">
+    <h2 class="section-title" id="section-events">
+      Centro de eventos
+      <div class="section-controls">
+        <button id="btn-notifications" class="btn-secondary" type="button"
+                onclick="requestNotificationPermission()"
+                aria-label="Activar notificaciones del navegador">
+          Activar notificaciones
+        </button>
+      </div>
+    </h2>
+    <div id="events-container" aria-live="polite">
+      <p class="empty-state">Cargando…</p>
+    </div>
+  </section>
+
 </main>
 
 <!-- ============================================================ Footer -->

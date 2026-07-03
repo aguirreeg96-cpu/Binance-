@@ -77,32 +77,28 @@ def create_app() -> FastAPI:
 
     # Routers
     from app.api.backtesting import router as backtesting_router
+    from app.api.diagnostic import router as diagnostic_router
+    from app.api.events import router as events_router
+    from app.api.health import router as health_router
     from app.api.indicators import router as indicators_router
     from app.api.market_data import router as market_data_router
     from app.api.paper_breakout import router as paper_breakout_router
     from app.api.strategy import router as strategy_router
     from app.dashboard.router import router as dashboard_router
 
+    app.include_router(health_router)
     app.include_router(market_data_router)
     app.include_router(indicators_router)
     app.include_router(strategy_router)
     app.include_router(backtesting_router)
     app.include_router(paper_breakout_router)
+    app.include_router(events_router)
+    app.include_router(diagnostic_router)
     app.include_router(dashboard_router)
 
     # Static files for the dashboard (CSS, JS)
     _static_dir = Path(__file__).parent / "dashboard" / "static"
     app.mount("/dashboard/static", StaticFiles(directory=str(_static_dir)), name="dashboard-static")
-
-    @app.get("/health", tags=["system"])
-    async def health() -> dict[str, str]:
-        return {
-            "status": "ok",
-            "mode": settings.trading_mode.value,
-            "symbol": settings.trading_symbol,
-            "interval": settings.trading_interval,
-            "warning": "PAPER/TEST environment — no real money",
-        }
 
     @app.get("/config", tags=["system"])
     async def config_summary() -> dict[str, str | int]:

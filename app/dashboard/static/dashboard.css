@@ -396,3 +396,72 @@ code {
 .strategy-selector {
   display: none; /* hidden until more strategies are implemented */
 }
+
+/* ---- Health badge ---- */
+.health-badge {
+  display: inline-block;
+  font-size: 1.1rem;
+  font-weight: 700;
+  letter-spacing: .06em;
+  padding: .35rem .9rem;
+  border-radius: 6px;
+  border: 1px solid var(--border);
+  margin-bottom: .85rem;
+  background: var(--bg-card);
+}
+.health-badge.status-ok   { color: var(--green); border-color: var(--green); }
+.health-badge.status-warn { color: var(--yellow); border-color: var(--yellow); }
+.health-badge.status-err  { color: var(--red); border-color: var(--red); }
+
+/* ---- Health issues list ---- */
+.health-issues {
+  margin: .75rem 0 0 0;
+  padding-left: 1.25rem;
+  color: var(--yellow);
+  font-size: .82rem;
+  line-height: 1.7;
+}
+
+/* ---- Events list ---- */
+.events-list {
+  display: flex;
+  flex-direction: column;
+  gap: .6rem;
+}
+.event-item {
+  background: var(--bg-card);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: .7rem 1rem;
+  border-left-width: 3px;
+}
+.event-item.sev-info    { border-left-color: var(--blue); }
+.event-item.sev-warning { border-left-color: var(--yellow); }
+.event-item.sev-error   { border-left-color: var(--red); }
+.event-header {
+  display: flex;
+  align-items: center;
+  gap: .75rem;
+  flex-wrap: wrap;
+  margin-bottom: .3rem;
+}
+.event-type {
+  font-weight: 700;
+  font-size: .82rem;
+  letter-spacing: .04em;
+  color: var(--text);
+}
+.event-ts {
+  font-size: .75rem;
+  color: var(--text-mute);
+  flex: 1;
+}
+.event-msg {
+  font-size: .82rem;
+  color: var(--text-dim);
+  word-break: break-word;
+}
+.btn-xs {
+  font-size: .72rem;
+  padding: .2rem .55rem;
+}

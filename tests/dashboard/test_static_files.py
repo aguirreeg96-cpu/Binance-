@@ -92,9 +92,7 @@ class TestJSSecurity:
     def test_no_external_urls(self):
         """No external fetch/XHR URLs — SVG namespace constants are allowed."""
         # Exclude the W3C SVG namespace URI (a constant identifier, not a network call)
-        external = re.findall(
-            r"https?://(?!localhost|127\.0\.0\.1|www\.w3\.org)", self._js
-        )
+        external = re.findall(r"https?://(?!localhost|127\.0\.0\.1|www\.w3\.org)", self._js)
         assert external == [], f"External URL references found: {external}"
 
 

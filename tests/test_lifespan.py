@@ -10,12 +10,12 @@ Verifies:
   - No external HTTP connections are made
 """
 
-from alembic.config import Config
 from fastapi.testclient import TestClient
 from sqlalchemy import create_engine, inspect
 from sqlalchemy.orm import sessionmaker
 
 from alembic import command
+from alembic.config import Config
 from app.database import get_db
 
 
@@ -72,8 +72,8 @@ class TestLifespanIntegration:
             resp = tc.get("/health")
             assert resp.status_code == 200
             body = resp.json()
-            assert body["status"] == "ok"
-            assert body["mode"] == "paper"
+            assert body["status"] in ("HEALTHY", "DEGRADED", "ERROR")
+            assert "db_status" in body
             assert "no real money" in body["warning"].lower()
 
             # -- GET /klines (empty DB, include_open_candle=True → no server-time call) --

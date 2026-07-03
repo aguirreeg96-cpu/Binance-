@@ -14,6 +14,7 @@ from __future__ import annotations
 import argparse
 import asyncio
 import logging
+import os
 import sys
 from datetime import UTC, datetime
 
@@ -30,6 +31,11 @@ _WARNING = (
     "║  No private keys used. No orders ever sent to Binance.        ║\n"
     "║  Past results do NOT predict future performance.              ║\n"
     "╚══════════════════════════════════════════════════════════════╝\n"
+)
+
+# Signal types that should produce a PaperEvent
+_NOTIFIABLE_SIGNALS = frozenset(
+    {"BUY_PENDING", "LONG_OPENED", "SELL_PENDING", "POSITION_EXITED", "ERROR_DATA_GAP"}
 )
 
 
@@ -50,8 +56,20 @@ async def _run_one_cycle(args: argparse.Namespace) -> int:
     from app.forward.exceptions import ForwardConfigMismatchError
     from app.forward.sync import sync_forward_candles
     from app.market_data.client import BinanceMarketDataClient
+    from app.services.alerting import emit_event, maybe_send_telegram
+    from app.services.heartbeat import (
+        RESULT_ERROR,
+        RESULT_NO_NEW_CANDLE,
+        RESULT_OK,
+        record_heartbeat,
+    )
 
     settings = get_settings()
+    pid = os.getpid()
+    outcomes: list = []
+    cycle_result = RESULT_ERROR
+    last_candle_time: datetime | None = None
+    error_msg: str | None = None
 
     with SessionLocal() as session:
         try:
@@ -62,39 +80,102 @@ async def _run_one_cycle(args: argparse.Namespace) -> int:
             )
         except ForwardConfigMismatchError as exc:
             print(f"ERROR: {exc}")
+            record_heartbeat(
+                session,
+                cycle_result=RESULT_ERROR,
+                error_message=str(exc)[:500],
+                process_pid=pid,
+            )
+            session.commit()
             return 1
 
-        async with BinanceMarketDataClient(
-            base_url=settings.binance_market_data_url,
-            timeout=settings.market_data_timeout,
-            max_retries=settings.market_data_max_retries,
-            max_retry_after=settings.market_data_max_retry_after,
-        ) as client:
-            sync_result = await sync_forward_candles(
-                session,
-                client,
-                max_requests=settings.market_data_max_requests,
-            )
+        try:
+            async with BinanceMarketDataClient(
+                base_url=settings.binance_market_data_url,
+                timeout=settings.market_data_timeout,
+                max_retries=settings.market_data_max_retries,
+                max_retry_after=settings.market_data_max_retry_after,
+            ) as client:
+                sync_result = await sync_forward_candles(
+                    session,
+                    client,
+                    max_requests=settings.market_data_max_requests,
+                )
 
-        if sync_result is not None:
-            logger.info(
-                "Sync | inserted=%d updated=%d ignored=%d requests=%d | range=[%s, %s]",
-                sync_result.inserted,
-                sync_result.updated,
-                sync_result.ignored,
-                sync_result.requests_made,
-                sync_result.first_open_time.isoformat() if sync_result.first_open_time else "n/a",
-                sync_result.last_open_time.isoformat() if sync_result.last_open_time else "n/a",
-            )
-        else:
-            logger.info("Sync: already up to date — no new candles fetched.")
+            if sync_result is not None:
+                logger.info(
+                    "Sync | inserted=%d updated=%d ignored=%d requests=%d" " | range=[%s, %s]",
+                    sync_result.inserted,
+                    sync_result.updated,
+                    sync_result.ignored,
+                    sync_result.requests_made,
+                    (
+                        sync_result.first_open_time.isoformat()
+                        if sync_result.first_open_time
+                        else "n/a"
+                    ),
+                    (
+                        sync_result.last_open_time.isoformat()
+                        if sync_result.last_open_time
+                        else "n/a"
+                    ),
+                )
+                if sync_result.last_open_time is not None:
+                    last_candle_time = sync_result.last_open_time
+            else:
+                logger.info("Sync: already up to date — no new candles fetched.")
 
-        engine = ForwardPaperEngine(
-            session, data_gap_grace_seconds=settings.forward_data_gap_grace_seconds
+            engine = ForwardPaperEngine(
+                session, data_gap_grace_seconds=settings.forward_data_gap_grace_seconds
+            )
+            outcomes = engine.run_cycle(launch, _now_naive_utc())
+            report = engine.last_report
+            session.refresh(launch)
+
+            cycle_result = RESULT_OK if outcomes else RESULT_NO_NEW_CANDLE
+
+        except Exception as exc:  # noqa: BLE001
+            error_msg = str(exc)[:500]
+            logger.error("Cycle error: %s", error_msg)
+            report = None
+            outcomes = []
+
+        # Record heartbeat
+        record_heartbeat(
+            session,
+            cycle_result=cycle_result,
+            evaluations_created=len(outcomes),
+            last_candle_time=last_candle_time,
+            error_message=error_msg,
+            process_pid=pid,
         )
-        outcomes = engine.run_cycle(launch, _now_naive_utc())
-        report = engine.last_report
-        session.refresh(launch)
+
+        # Emit events for notifiable signals
+        for outcome in outcomes:
+            if outcome.signal in _NOTIFIABLE_SIGNALS:
+                ikey = (
+                    f"eval_{launch.id}_{outcome.candle_close_time.isoformat()}" f"_{outcome.signal}"
+                )
+                msg = (
+                    f"Signal: {outcome.signal} | "
+                    f"Candle: {outcome.candle_close_time.isoformat()} | "
+                    f"Reasons: {', '.join(outcome.reasons)}"
+                )
+                event = emit_event(
+                    session,
+                    event_type=outcome.signal,
+                    message=msg,
+                    idempotency_key=ikey,
+                )
+                session.commit()
+                if event is not None:
+                    await maybe_send_telegram(session, event)
+                    session.commit()
+            else:
+                session.commit()
+
+        if not outcomes:
+            session.commit()
 
     print(f"Launch id={launch.id} status={launch.status} evaluations_this_cycle={len(outcomes)}")
     for outcome in outcomes:
@@ -135,7 +216,27 @@ async def _run_continuous(args: argparse.Namespace) -> int:
             await asyncio.sleep(poll_seconds)
     except KeyboardInterrupt:
         logger.info("Continuous mode stopped (KeyboardInterrupt).")
+        _emit_stop_event()
         return 0
+
+
+def _emit_stop_event() -> None:
+    """Record a PAPER_PROCESS_STOPPED event synchronously on shutdown."""
+    try:
+        from app.database import SessionLocal
+        from app.services.alerting import emit_event
+
+        ikey = f"stop_{_now_naive_utc().isoformat()}"
+        with SessionLocal() as session:
+            emit_event(
+                session,
+                event_type="PAPER_PROCESS_STOPPED",
+                message="Paper trader process stopped (KeyboardInterrupt).",
+                idempotency_key=ikey,
+            )
+            session.commit()
+    except Exception:  # noqa: BLE001
+        pass
 
 
 def _build_parser() -> argparse.ArgumentParser:
@@ -173,8 +274,6 @@ def main() -> None:
     args = parser.parse_args()
 
     # Run DB migrations exactly ONCE at startup, before the event loop starts.
-    # Continuous mode polls _run_one_cycle() repeatedly; running migrations on
-    # every poll would produce Alembic noise and slow down each cycle.
     from app.database import run_migrations
 
     logger.info("Running DB migrations...")

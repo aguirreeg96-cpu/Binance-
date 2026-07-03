@@ -134,6 +134,17 @@ class Settings(BaseSettings):
     log_level: str = "INFO"
     database_url: str = "sqlite:///./trading.db"
 
+    # Process manager / runtime (Stage 6.3)
+    paper_app_host: str = "127.0.0.1"
+    paper_app_port: int = 8000
+    paper_log_max_bytes: int = 10 * 1024 * 1024  # 10 MB per file
+    paper_log_backup_count: int = 5  # rotated copies to keep
+    paper_backup_retention: int = 30  # SQLite backups to keep
+
+    # Optional Telegram alerting — never logged, never exposed via API
+    telegram_bot_token: str | None = None
+    telegram_chat_id: str | None = None
+
     # ---------------------------------------------------------------------------
     # Validators
     # ---------------------------------------------------------------------------

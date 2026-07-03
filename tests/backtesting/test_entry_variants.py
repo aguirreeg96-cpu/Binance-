@@ -981,9 +981,9 @@ class TestCapitalCompounding:
         report = self._run_multi()
         _HUNDRED = Decimal("100")
         for s in report.yearly_summary:
-            assert s.compounded_final_2023 == s.compounded_initial_2024, (
-                f"{s.entry_variant}: compounded_final_2023 != compounded_initial_2024"
-            )
+            assert (
+                s.compounded_final_2023 == s.compounded_initial_2024
+            ), f"{s.entry_variant}: compounded_final_2023 != compounded_initial_2024"
             expected_24 = s.compounded_initial_2024 * (Decimal("1") + s.return_pct_2024 / _HUNDRED)
             assert abs(s.compounded_final_2024 - expected_24) < Decimal("0.0001")
 
@@ -1463,6 +1463,6 @@ class TestDeterminismExtended:
                 for c in report.combinations
                 if c.entry_variant == "ENTRY_V4_SEPARATION_010" and c.exit_config_name == exit_name
             )
-            assert len(v4_010.executed_buy_ids) <= len(v1.executed_buy_ids), (
-                f"exit={exit_name}: V4_010 has more executed trades than V1"
-            )
+            assert len(v4_010.executed_buy_ids) <= len(
+                v1.executed_buy_ids
+            ), f"exit={exit_name}: V4_010 has more executed trades than V1"

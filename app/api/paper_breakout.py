@@ -421,9 +421,7 @@ class DashboardTradeResponse(BaseModel):
     @classmethod
     def from_trade(cls, t: Trade) -> DashboardTradeResponse:
         entry_cost = t.entry_price * t.quantity
-        ret_pct = (
-            (t.net_pnl / entry_cost * Decimal("100")) if entry_cost != 0 else Decimal("0")
-        )
+        ret_pct = (t.net_pnl / entry_cost * Decimal("100")) if entry_cost != 0 else Decimal("0")
         duration = (t.closed_at - t.opened_at).total_seconds() / 3600
         return cls(
             id=t.id,

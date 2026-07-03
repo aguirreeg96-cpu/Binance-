@@ -169,17 +169,17 @@ class TestOosExclusive2025Range:
     def test_no_trades_before_start_ms(self, report: FrozenOos2025Report) -> None:
         for scenario_name, result in report.raw_results.items():
             for trade in result.trades:
-                assert trade.entry_exec_time >= _START_MS_2025, (
-                    f"{scenario_name}: trade at {trade.entry_exec_time} before start_ms"
-                )
+                assert (
+                    trade.entry_exec_time >= _START_MS_2025
+                ), f"{scenario_name}: trade at {trade.entry_exec_time} before start_ms"
 
     def test_no_non_forced_exit_after_end_ms(self, report: FrozenOos2025Report) -> None:
         for scenario_name, result in report.raw_results.items():
             for trade in result.trades:
                 if not trade.is_forced_close:
-                    assert trade.exit_exec_time <= _END_MS_2025, (
-                        f"{scenario_name}: non-forced exit at {trade.exit_exec_time} after end_ms"
-                    )
+                    assert (
+                        trade.exit_exec_time <= _END_MS_2025
+                    ), f"{scenario_name}: non-forced exit at {trade.exit_exec_time} after end_ms"
 
     def test_warmup_boundary_ok_in_audit(self, report: FrozenOos2025Report) -> None:
         assert report.audit.warmup_boundary_ok is True
@@ -532,9 +532,9 @@ class TestDeterminism:
             indicator_config=_IND_CFG,
         )
         for s1, s2 in zip(r1.scenarios, r2.scenarios, strict=False):
-            assert s1.total_trades == s2.total_trades, (
-                f"{s1.scenario}: non-deterministic trade count"
-            )
+            assert (
+                s1.total_trades == s2.total_trades
+            ), f"{s1.scenario}: non-deterministic trade count"
 
     def test_identical_audit(self) -> None:
         candles = _make_candles_2025()

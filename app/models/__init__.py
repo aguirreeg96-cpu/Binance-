@@ -1,8 +1,10 @@
 from app.models.candle import Candle
 from app.models.daily_risk_state import DailyRiskState
 from app.models.forward_paper import ForwardLaunch, ForwardSignalEvaluation
+from app.models.heartbeat import PaperHeartbeat
 from app.models.order import Order
 from app.models.paper_account import PaperAccount
+from app.models.paper_event import PaperEvent
 from app.models.position import Position
 from app.models.signal import Signal
 from app.models.strategy_config import StrategyConfig
@@ -14,8 +16,10 @@ __all__ = [
     "DailyRiskState",
     "ForwardLaunch",
     "ForwardSignalEvaluation",
+    "PaperHeartbeat",
     "Order",
     "PaperAccount",
+    "PaperEvent",
     "Position",
     "Signal",
     "StrategyConfig",
