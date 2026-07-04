@@ -37,7 +37,6 @@ import sys
 import time
 from datetime import UTC, datetime
 from pathlib import Path
-from typing import Optional
 
 # ---------------------------------------------------------------------------
 # Runtime directory layout
@@ -130,7 +129,7 @@ def _setup_manager_logger() -> logging.Logger:
 # ---------------------------------------------------------------------------
 
 
-def _read_pid(service: str) -> Optional[int]:
+def _read_pid(service: str) -> int | None:
     pf = _pid_file(service)
     try:
         return int(pf.read_text().strip())
@@ -157,7 +156,7 @@ def _is_running(pid: int) -> bool:
         return False
 
 
-def _service_running(service: str) -> tuple[bool, Optional[int]]:
+def _service_running(service: str) -> tuple[bool, int | None]:
     pid = _read_pid(service)
     if pid is None:
         return False, None
@@ -307,23 +306,28 @@ def cmd_status(args: argparse.Namespace) -> int:
         state = f"RUNNING (pid={pid})" if running else "STOPPED"
         print(f"  {service:<20} {state}")
 
-    # Show latest heartbeat if available
+    # Show latest heartbeat if available.  Primitive snapshots are captured inside the
+    # session block to avoid DetachedInstanceError after the session closes.
     try:
         from app.database import SessionLocal
         from app.services.heartbeat import get_latest_heartbeat
 
+        hb_ts: str | None = None
+        hb_result: str | None = None
+        hb_age_s: int | None = None
+
         with SessionLocal() as session:
             hb = get_latest_heartbeat(session)
-        if hb is None:
+            if hb is not None:
+                now = datetime.now(UTC).replace(tzinfo=None)
+                hb_ts = hb.timestamp_utc.isoformat()
+                hb_result = hb.cycle_result
+                hb_age_s = int((now - hb.timestamp_utc).total_seconds())
+
+        if hb_ts is None:
             print("\n  Heartbeat: no record yet")
         else:
-            now = datetime.now(UTC).replace(tzinfo=None)
-            age = int((now - hb.timestamp_utc).total_seconds())
-            print(
-                f"\n  Heartbeat: {hb.timestamp_utc.isoformat()}Z"
-                f"  result={hb.cycle_result}"
-                f"  age={age}s"
-            )
+            print(f"\n  Heartbeat: {hb_ts}Z  result={hb_result}  age={hb_age_s}s")
     except Exception:
         pass
 

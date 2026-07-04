@@ -1086,6 +1086,6 @@ class TestIncompletePeriodsHandling:
         for config_id, yr_map in report.raw_results.items():
             for yr, scenario_map in yr_map.items():
                 for t in scenario_map["BASE_COSTS"].trades:
-                    assert (
-                        t.entry_exec_time >= year_start_ms
-                    ), f"{config_id}/{yr}: trade executed before evaluation period"
+                    assert t.entry_exec_time >= year_start_ms, (
+                        f"{config_id}/{yr}: trade executed before evaluation period"
+                    )

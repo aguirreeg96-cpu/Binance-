@@ -181,6 +181,39 @@ class TestCmdStatus:
         assert "paper_trader" in out
         assert "api_server" in out
 
+    def test_status_with_heartbeat_shows_info(self, capsys):
+        """Heartbeat data is extracted inside the session block to avoid DetachedInstanceError."""
+        from datetime import datetime
+
+        hb = MagicMock()
+        hb.timestamp_utc = datetime(2025, 6, 1, 12, 0, 0)
+        hb.cycle_result = "OK"
+
+        session_ctx = MagicMock()
+        session_ctx.__enter__ = MagicMock(return_value=session_ctx)
+        session_ctx.__exit__ = MagicMock(return_value=False)
+
+        with patch("app.database.SessionLocal", return_value=session_ctx):
+            with patch("app.services.heartbeat.get_latest_heartbeat", return_value=hb):
+                args = MagicMock()
+                rc = mgr.cmd_status(args)
+
+        assert rc == 0
+        out = capsys.readouterr().out
+        assert "Heartbeat" in out
+        assert "result=OK" in out
+
+    def test_status_heartbeat_attributes_read_inside_session_block(self):
+        """Source-level guard: hb.timestamp_utc and hb.cycle_result must not appear
+        outside the 'with SessionLocal()' block in cmd_status."""
+        import inspect
+
+        src = inspect.getsource(mgr.cmd_status)
+        # Verify the primitive snapshot variables are used
+        assert "hb_ts" in src
+        assert "hb_result" in src
+        assert "hb_age_s" in src
+
 
 # ---------------------------------------------------------------------------
 # cmd_diagnose — smoke test

@@ -70,6 +70,9 @@ async def _run_one_cycle(args: argparse.Namespace) -> int:
     cycle_result = RESULT_ERROR
     last_candle_time: datetime | None = None
     error_msg: str | None = None
+    # Primitive snapshots captured inside the session block (avoids DetachedInstanceError)
+    launch_id: int = -1
+    launch_status: str = "unknown"
 
     with SessionLocal() as session:
         try:
@@ -89,6 +92,9 @@ async def _run_one_cycle(args: argparse.Namespace) -> int:
             session.commit()
             return 1
 
+        # Capture PK immediately — integer PK is always in-memory and never requires a reload.
+        launch_id = launch.id
+
         try:
             async with BinanceMarketDataClient(
                 base_url=settings.binance_market_data_url,
@@ -104,7 +110,7 @@ async def _run_one_cycle(args: argparse.Namespace) -> int:
 
             if sync_result is not None:
                 logger.info(
-                    "Sync | inserted=%d updated=%d ignored=%d requests=%d" " | range=[%s, %s]",
+                    "Sync | inserted=%d updated=%d ignored=%d requests=%d | range=[%s, %s]",
                     sync_result.inserted,
                     sync_result.updated,
                     sync_result.ignored,
@@ -150,12 +156,11 @@ async def _run_one_cycle(args: argparse.Namespace) -> int:
             process_pid=pid,
         )
 
-        # Emit events for notifiable signals
+        # Emit events for notifiable signals.  Use launch_id (captured above) so we never
+        # access an expired attribute inside the loop after intervening commits.
         for outcome in outcomes:
             if outcome.signal in _NOTIFIABLE_SIGNALS:
-                ikey = (
-                    f"eval_{launch.id}_{outcome.candle_close_time.isoformat()}" f"_{outcome.signal}"
-                )
+                ikey = f"eval_{launch_id}_{outcome.candle_close_time.isoformat()}_{outcome.signal}"
                 msg = (
                     f"Signal: {outcome.signal} | "
                     f"Candle: {outcome.candle_close_time.isoformat()} | "
@@ -177,7 +182,11 @@ async def _run_one_cycle(args: argparse.Namespace) -> int:
         if not outcomes:
             session.commit()
 
-    print(f"Launch id={launch.id} status={launch.status} evaluations_this_cycle={len(outcomes)}")
+        # Snapshot status while the session is still active.  Accessing any non-PK column
+        # after the session closes raises DetachedInstanceError.
+        launch_status = launch.status
+
+    print(f"Launch id={launch_id} status={launch_status} evaluations_this_cycle={len(outcomes)}")
     for outcome in outcomes:
         print(f"  {outcome.candle_close_time.isoformat()}  {outcome.signal}  {outcome.reasons}")
 

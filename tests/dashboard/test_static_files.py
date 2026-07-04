@@ -85,9 +85,9 @@ class TestJSSecurity:
     def test_no_hardcoded_api_keys(self):
         js_lower = self._js.lower()
         for keyword in ("api_key", "apikey", "secret", "private_key"):
-            assert (
-                keyword not in js_lower
-            ), f"Potential secret keyword '{keyword}' found in dashboard.js"
+            assert keyword not in js_lower, (
+                f"Potential secret keyword '{keyword}' found in dashboard.js"
+            )
 
     def test_no_external_urls(self):
         """No external fetch/XHR URLs — SVG namespace constants are allowed."""

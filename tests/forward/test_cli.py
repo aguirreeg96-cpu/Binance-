@@ -177,3 +177,90 @@ class TestArchitectureGuard:
             src = f.read()
         assert "real_order" not in src
         assert "place_order" not in src
+
+
+class TestDetachedInstanceFix:
+    """Regression tests for the DetachedInstanceError bug.
+
+    Before the fix, `launch.id` and `launch.status` were read on line 180
+    of run_paper_breakout.py *after* the `with SessionLocal()` block closed,
+    which caused DetachedInstanceError because SQLAlchemy had already expired
+    all attributes on `launch`.  The fix snapshots both values as primitives
+    inside the session block.
+    """
+
+    @pytest.mark.asyncio
+    async def test_run_one_cycle_prints_launch_id_and_status(self, capsys):
+        """launch_id and launch_status must appear in stdout without DetachedInstanceError."""
+        from unittest.mock import AsyncMock, MagicMock, patch
+
+        mock_launch = MagicMock()
+        mock_launch.id = 1
+        mock_launch.status = "ACTIVE"
+
+        with (
+            patch("app.database.SessionLocal"),
+            patch("app.market_data.client.BinanceMarketDataClient", return_value=AsyncMock()),
+            patch("app.forward.engine.start_or_resume_launch", return_value=mock_launch),
+            patch(
+                "app.forward.sync.sync_forward_candles", new_callable=AsyncMock, return_value=None
+            ),
+            patch("app.forward.engine.ForwardPaperEngine") as MockEngine,
+        ):
+            MockEngine.return_value.run_cycle.return_value = []
+            MockEngine.return_value.last_report = None
+
+            from app.cli.run_paper_breakout import _run_one_cycle
+
+            args = argparse.Namespace(once=True, continuous=False, poll_interval_seconds=None)
+            rc = await _run_one_cycle(args)
+
+        assert rc == 0
+        out = capsys.readouterr().out
+        assert "Launch id=1" in out
+        assert "status=ACTIVE" in out
+        assert "evaluations_this_cycle=0" in out
+
+    @pytest.mark.asyncio
+    async def test_run_one_cycle_launch_id_not_accessed_after_session_closes(self):
+        """Verify launch.id is never accessed outside the session by inspecting source."""
+        import inspect
+
+        import app.cli.run_paper_breakout as cli_mod
+
+        src = inspect.getsource(cli_mod._run_one_cycle)
+        # The print statement must reference the captured primitive, not the ORM attribute
+        assert "launch_id" in src
+        assert "launch_status" in src
+        # The print line must NOT use launch.id or launch.status directly
+        for line in src.splitlines():
+            stripped = line.strip()
+            if stripped.startswith("print(") and "Launch id=" in stripped:
+                assert "launch.id" not in stripped, (
+                    "print() must use `launch_id` snapshot, not `launch.id` (DetachedInstanceError)"
+                )
+                assert "launch.status" not in stripped, (
+                    "print() must use `launch_status` snapshot, not `launch.status`"
+                )
+
+    def test_evaluation_outcome_fields_are_primitives(self):
+        """EvaluationOutcome must be a pure frozen dataclass — no live ORM instances."""
+        import dataclasses
+        import pickle
+        from datetime import datetime
+
+        from app.forward.engine import EvaluationOutcome
+
+        o = EvaluationOutcome(
+            candle_close_time=datetime(2025, 1, 1, 12, 0, 0),
+            signal="WAIT",
+            reasons=["NO_SIGNAL"],
+        )
+        assert dataclasses.is_dataclass(o)
+        assert isinstance(o.candle_close_time, datetime)
+        assert isinstance(o.signal, str)
+        assert isinstance(o.reasons, list)
+        # All-primitive dataclass must survive pickling (ensures no ORM live objects)
+        restored = pickle.loads(pickle.dumps(o))
+        assert restored.signal == "WAIT"
+        assert restored.candle_close_time == datetime(2025, 1, 1, 12, 0, 0)
