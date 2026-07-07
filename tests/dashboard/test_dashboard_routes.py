@@ -269,6 +269,70 @@ def launched_client(test_engine):
     engine.dispose()
 
 
+class TestDecisionField:
+    def test_decision_null_without_launch(self, api_client):
+        resp = api_client.get("/api/v1/paper-breakout/dashboard-summary")
+        data = resp.json()
+        assert data["decision"] is None
+
+    def test_decision_present_with_launch(self, launched_client):
+        resp = launched_client.get("/api/v1/paper-breakout/dashboard-summary")
+        data = resp.json()
+        assert data["decision"] is not None
+
+    def test_decision_has_required_fields(self, launched_client):
+        resp = launched_client.get("/api/v1/paper-breakout/dashboard-summary")
+        dec = resp.json()["decision"]
+        for field in (
+            "current_decision",
+            "action_label",
+            "action_severity",
+            "plain_language_explanation",
+            "failed_conditions",
+            "is_entry_signal",
+            "is_exit_signal",
+            "has_open_position",
+        ):
+            assert field in dec, f"Missing field: {field}"
+
+    def test_decision_current_decision_is_valid_enum(self, launched_client):
+        resp = launched_client.get("/api/v1/paper-breakout/dashboard-summary")
+        dec = resp.json()["decision"]
+        valid = {
+            "NO_COMPRAR",
+            "ENTRADA_DETECTADA",
+            "POSICION_ABIERTA",
+            "CERRAR_POSICION",
+            "OPERACION_CERRADA",
+            "REVISAR_SISTEMA",
+        }
+        assert dec["current_decision"] in valid
+
+    def test_decision_severity_is_valid(self, launched_client):
+        resp = launched_client.get("/api/v1/paper-breakout/dashboard-summary")
+        dec = resp.json()["decision"]
+        assert dec["action_severity"] in ("neutral", "success", "info", "warning", "danger")
+
+    def test_decision_boolean_flags(self, launched_client):
+        resp = launched_client.get("/api/v1/paper-breakout/dashboard-summary")
+        dec = resp.json()["decision"]
+        assert isinstance(dec["is_entry_signal"], bool)
+        assert isinstance(dec["is_exit_signal"], bool)
+        assert isinstance(dec["has_open_position"], bool)
+
+    def test_decision_failed_conditions_is_list(self, launched_client):
+        resp = launched_client.get("/api/v1/paper-breakout/dashboard-summary")
+        dec = resp.json()["decision"]
+        assert isinstance(dec["failed_conditions"], list)
+
+    def test_decision_no_launch_gives_no_comprar_when_no_signals(self, launched_client):
+        resp = launched_client.get("/api/v1/paper-breakout/dashboard-summary")
+        data = resp.json()
+        dec = data["decision"]
+        if not data["signals"]:
+            assert dec["current_decision"] == "NO_COMPRAR"
+
+
 class TestDashboardSummaryWithLaunch:
     def test_summary_200_with_launch(self, launched_client):
         resp = launched_client.get("/api/v1/paper-breakout/dashboard-summary")

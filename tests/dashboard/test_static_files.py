@@ -85,9 +85,9 @@ class TestJSSecurity:
     def test_no_hardcoded_api_keys(self):
         js_lower = self._js.lower()
         for keyword in ("api_key", "apikey", "secret", "private_key"):
-            assert keyword not in js_lower, (
-                f"Potential secret keyword '{keyword}' found in dashboard.js"
-            )
+            assert (
+                keyword not in js_lower
+            ), f"Potential secret keyword '{keyword}' found in dashboard.js"
 
     def test_no_external_urls(self):
         """No external fetch/XHR URLs — SVG namespace constants are allowed."""
@@ -185,6 +185,7 @@ class TestHTMLTemplate:
 
     def test_html_has_all_section_ids(self):
         required_ids = [
+            "decision-card-container",
             "launch-status-badge",
             "error-banner",
             "warnings-bar",
@@ -208,3 +209,25 @@ class TestHTMLTemplate:
         ]
         for elem_id in required_ids:
             assert f'id="{elem_id}"' in self._html, f'Missing element: id="{elem_id}"'
+
+    def test_html_decision_card_is_before_summary_section(self):
+        decision_pos = self._html.find('id="decision-card-container"')
+        summary_pos = self._html.find('id="section-summary"')
+        assert decision_pos < summary_pos, "Decision card must appear before summary section"
+
+
+class TestDecisionJS:
+    def setup_method(self):
+        self._js = _JS.read_text(encoding="utf-8")
+
+    def test_render_decision_card_function_exists(self):
+        assert "function renderDecisionCard" in self._js
+
+    def test_render_decision_card_called_in_render(self):
+        assert "renderDecisionCard(d)" in self._js
+
+    def test_decision_card_uses_text_content_not_inner_html(self):
+        assert ".textContent" in self._js
+
+    def test_no_signal_box_created_via_create_element(self):
+        assert "no-signal-box" in self._js

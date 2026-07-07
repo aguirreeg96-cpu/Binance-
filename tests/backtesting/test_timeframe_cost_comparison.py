@@ -206,25 +206,25 @@ class TestNoCostsInvariants:
         """NO_COSTS reference: cost_drag must be exactly 0."""
         for r in report.results:
             if r.cost_scenario == "NO_COSTS":
-                assert r.cost_drag == Decimal("0"), (
-                    f"{r.timeframe}/{r.year}: cost_drag={r.cost_drag}"
-                )
+                assert r.cost_drag == Decimal(
+                    "0"
+                ), f"{r.timeframe}/{r.year}: cost_drag={r.cost_drag}"
 
     def test_no_costs_slippage_cost_is_zero(self, report: TimeframeCostReport):
         """NO_COSTS reference: slippage_cost must be exactly 0."""
         for r in report.results:
             if r.cost_scenario == "NO_COSTS":
-                assert r.slippage_cost == Decimal("0"), (
-                    f"{r.timeframe}/{r.year}: slippage_cost={r.slippage_cost}"
-                )
+                assert r.slippage_cost == Decimal(
+                    "0"
+                ), f"{r.timeframe}/{r.year}: slippage_cost={r.slippage_cost}"
 
     def test_no_costs_total_fees_zero(self, report: TimeframeCostReport):
         """NO_COSTS run charges no fees."""
         for r in report.results:
             if r.cost_scenario == "NO_COSTS":
-                assert r.total_fees == Decimal("0"), (
-                    f"{r.timeframe}/{r.year}: total_fees={r.total_fees}"
-                )
+                assert r.total_fees == Decimal(
+                    "0"
+                ), f"{r.timeframe}/{r.year}: total_fees={r.total_fees}"
 
 
 # ---------------------------------------------------------------------------
@@ -297,9 +297,9 @@ class TestDeterminism:
         r2 = run_timeframe_cost_comparison(**common)
 
         for a, b in zip(r1.results, r2.results, strict=True):
-            assert a.final_equity == b.final_equity, (
-                f"{a.timeframe}/{a.cost_scenario}/{a.year}: {a.final_equity} != {b.final_equity}"
-            )
+            assert (
+                a.final_equity == b.final_equity
+            ), f"{a.timeframe}/{a.cost_scenario}/{a.year}: {a.final_equity} != {b.final_equity}"
             assert a.return_pct == b.return_pct
 
 

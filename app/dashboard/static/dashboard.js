@@ -61,6 +61,7 @@ async function fetchDashboard() {
 /* ------------------------------------------------------------ rendering */
 
 function render(d) {
+  renderDecisionCard(d);
   renderHeader(d);
   renderWarnings(d.warnings || []);
   renderSummaryCards(d);
@@ -72,6 +73,125 @@ function render(d) {
   renderEquityChart(d.equity_curve || [], d.launch ? d.launch.initial_capital : null);
   renderFrozenConfig(d.frozen_config || {}, d.launch);
   renderSystemStatus(d);
+}
+
+/* decision card */
+function renderDecisionCard(d) {
+  const container = document.getElementById('decision-card-container');
+  if (!container) return;
+  container.textContent = '';
+
+  const dec = d.decision;
+  if (!dec) {
+    if (!d.launch_exists) {
+      const p = document.createElement('p');
+      p.className = 'empty-state';
+      p.textContent = 'No hay un launch activo. Inicia el paper trader primero.';
+      container.appendChild(p);
+    }
+    return;
+  }
+
+  const card = document.createElement('div');
+  card.className = 'decision-card decision-' + dec.action_severity;
+
+  const lbl = document.createElement('div');
+  lbl.className = 'decision-action-label';
+  lbl.textContent = dec.action_label;
+  card.appendChild(lbl);
+
+  const grid = document.createElement('div');
+  grid.className = 'decision-details-grid';
+
+  const latestSig = d.signals && d.signals.length ? d.signals[0] : null;
+  const fields = [
+    { label: 'Señal técnica', value: latestSig ? latestSig.signal : '—' },
+    { label: 'Símbolo', value: d.launch ? d.launch.symbol : '—' },
+    { label: 'Timeframe', value: '4h' },
+    { label: 'Precio actual', value: dec.raw_market_price ? fmt2(dec.raw_market_price) + ' USDT' : '—' },
+    { label: 'Donchian entrada', value: dec.entry_donchian_level ? fmt2(dec.entry_donchian_level) + ' USDT' : '—' },
+    { label: 'Donchian salida', value: dec.exit_donchian_level ? fmt2(dec.exit_donchian_level) + ' USDT' : '—' },
+    { label: 'ATR', value: dec.atr ? fmtN(dec.atr, 2) + ' USDT' : '—' },
+    { label: 'Equity', value: dec.equity ? fmt2(dec.equity) + ' USDT' : '—' },
+    { label: 'Posición abierta', value: dec.has_open_position ? 'Sí' : 'No' },
+  ];
+
+  if (d.next_eligible_close_utc) {
+    fields.push({ label: 'Próxima eval. (UTC)', value: d.next_eligible_close_utc });
+    fields.push({ label: 'Próxima eval. (local)', value: localTime(d.next_eligible_close_utc) });
+  }
+  if (latestSig) {
+    fields.push({ label: 'Última eval. (UTC)', value: latestSig.candle_close_time });
+    fields.push({ label: 'Última eval. (local)', value: localTime(latestSig.candle_close_time) });
+  }
+
+  fields.forEach(function(f) {
+    const item = document.createElement('div');
+    item.className = 'decision-detail-item';
+    const itemLbl = document.createElement('div');
+    itemLbl.className = 'decision-detail-label';
+    itemLbl.textContent = f.label;
+    const itemVal = document.createElement('div');
+    itemVal.className = 'decision-detail-value';
+    itemVal.textContent = f.value;
+    item.appendChild(itemLbl);
+    item.appendChild(itemVal);
+    grid.appendChild(item);
+  });
+  card.appendChild(grid);
+
+  const expl = document.createElement('div');
+  expl.className = 'decision-explanation';
+  expl.textContent = dec.plain_language_explanation;
+  card.appendChild(expl);
+
+  container.appendChild(card);
+
+  if (
+    dec.current_decision === 'NO_COMPRAR' &&
+    dec.failed_conditions &&
+    dec.failed_conditions.length > 0
+  ) {
+    const box = document.createElement('div');
+    box.className = 'no-signal-box';
+
+    const title = document.createElement('div');
+    title.className = 'no-signal-title';
+    title.textContent = 'Por qué no hubo señal';
+    box.appendChild(title);
+
+    if (dec.price_vs_entry_diff_usd !== null && dec.price_vs_entry_diff_usd !== undefined) {
+      const diffRow = document.createElement('div');
+      diffRow.className = 'no-signal-diff';
+      const diffLabel = document.createElement('span');
+      diffLabel.textContent = 'Diferencia precio vs Donchian entrada: ';
+      const diffVal = document.createElement('span');
+      const isPositive = parseFloat(dec.price_vs_entry_diff_usd) >= 0;
+      diffVal.className = isPositive ? 'no-signal-diff-pos' : 'no-signal-diff-neg';
+      diffVal.textContent = dec.price_vs_entry_diff_usd + ' USDT (' + dec.price_vs_entry_diff_pct + '%)';
+      diffRow.appendChild(diffLabel);
+      diffRow.appendChild(diffVal);
+      box.appendChild(diffRow);
+    }
+
+    const condList = document.createElement('ul');
+    condList.className = 'no-signal-conditions';
+    dec.failed_conditions.forEach(function(cond) {
+      const li = document.createElement('li');
+      li.textContent = cond;
+      condList.appendChild(li);
+    });
+    box.appendChild(condList);
+
+    if (dec.atr !== null && dec.atr !== undefined) {
+      const atrRow = document.createElement('div');
+      atrRow.className = 'no-signal-atr';
+      atrRow.textContent = 'ATR actual: ' + fmtN(dec.atr, 2) + ' USDT';
+      box.appendChild(atrRow);
+    }
+
+    container.appendChild(box);
+  }
 }
 
 /* header */

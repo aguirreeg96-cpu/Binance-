@@ -236,12 +236,12 @@ class TestDetachedInstanceFix:
         for line in src.splitlines():
             stripped = line.strip()
             if stripped.startswith("print(") and "Launch id=" in stripped:
-                assert "launch.id" not in stripped, (
-                    "print() must use `launch_id` snapshot, not `launch.id` (DetachedInstanceError)"
-                )
-                assert "launch.status" not in stripped, (
-                    "print() must use `launch_status` snapshot, not `launch.status`"
-                )
+                assert (
+                    "launch.id" not in stripped
+                ), "print() must use `launch_id` snapshot, not `launch.id` (DetachedInstanceError)"
+                assert (
+                    "launch.status" not in stripped
+                ), "print() must use `launch_status` snapshot, not `launch.status`"
 
     def test_evaluation_outcome_fields_are_primitives(self):
         """EvaluationOutcome must be a pure frozen dataclass — no live ORM instances."""

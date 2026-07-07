@@ -139,16 +139,16 @@ class TestCandleCountInvariants:
         """raw_15m_total == warmup_15m + eval_15m for every row."""
         for row in audit.candle_counts:
             total = row.warmup_15m + row.eval_15m
-            assert total == row.raw_15m_total, (
-                f"{row.timeframe}/{row.year}: {row.warmup_15m}+{row.eval_15m}!={row.raw_15m_total}"
-            )
+            assert (
+                total == row.raw_15m_total
+            ), f"{row.timeframe}/{row.year}: {row.warmup_15m}+{row.eval_15m}!={row.raw_15m_total}"
 
     def test_agg_warmup_plus_eval_equals_agg_total(self, audit: TimeframeCostAuditReport):
         """agg_warmup + agg_eval == agg_total for every row."""
         for row in audit.candle_counts:
-            assert row.agg_warmup + row.agg_eval == row.agg_total, (
-                f"{row.timeframe}/{row.year}: {row.agg_warmup} + {row.agg_eval} != {row.agg_total}"
-            )
+            assert (
+                row.agg_warmup + row.agg_eval == row.agg_total
+            ), f"{row.timeframe}/{row.year}: {row.agg_warmup} + {row.agg_eval} != {row.agg_total}"
 
     def test_eval_candles_positive(self, audit: TimeframeCostAuditReport):
         """Every (tf, year) has at least one eval candle."""
@@ -256,16 +256,16 @@ class TestWarmupBoundaries:
     def test_no_trade_before_start(self, audit: TimeframeCostAuditReport):
         """No trade entry before start_ms (warmup boundary respected)."""
         for row in audit.warmup_boundaries:
-            assert not row.trade_before_start, (
-                f"{row.timeframe}/{row.year}/{row.cost_scenario}: trade before start_ms"
-            )
+            assert (
+                not row.trade_before_start
+            ), f"{row.timeframe}/{row.year}/{row.cost_scenario}: trade before start_ms"
 
     def test_no_trade_after_end(self, audit: TimeframeCostAuditReport):
         """No trade exit after end_ms."""
         for row in audit.warmup_boundaries:
-            assert not row.trade_after_end, (
-                f"{row.timeframe}/{row.year}/{row.cost_scenario}: trade after end_ms"
-            )
+            assert (
+                not row.trade_after_end
+            ), f"{row.timeframe}/{row.year}/{row.cost_scenario}: trade after end_ms"
 
     def test_first_trade_is_none_with_zero_trades(self, audit: TimeframeCostAuditReport):
         """No trades → first_trade_entry_exec_time is None."""

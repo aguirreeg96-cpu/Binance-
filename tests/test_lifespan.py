@@ -10,12 +10,12 @@ Verifies:
   - No external HTTP connections are made
 """
 
-from alembic.config import Config
 from fastapi.testclient import TestClient
 from sqlalchemy import create_engine, inspect
 from sqlalchemy.orm import sessionmaker
 
 from alembic import command
+from alembic.config import Config
 from app.database import get_db
 
 

@@ -60,6 +60,7 @@ from app.models.position import Position
 from app.models.trade import Trade
 from app.repositories.forward_repository import ForwardRepository
 from app.schemas.common import ForwardLaunchStatus
+from app.services.decision import DecisionSnapshot, compute_decision
 
 router = APIRouter(prefix="/api/v1/paper-breakout", tags=["paper-breakout"])
 
@@ -450,6 +451,46 @@ class SystemStatusResponse(BaseModel):
     last_evaluated_candle_close: str | None
 
 
+class DecisionSummaryResponse(BaseModel):
+    model_config = ConfigDict(from_attributes=False)
+
+    current_decision: str
+    action_label: str
+    action_severity: str
+    plain_language_explanation: str
+    failed_conditions: list[str]
+    is_entry_signal: bool
+    is_exit_signal: bool
+    has_open_position: bool
+    raw_market_price: str | None
+    entry_donchian_level: str | None
+    exit_donchian_level: str | None
+    atr: str | None
+    equity: str | None
+    price_vs_entry_diff_usd: str | None
+    price_vs_entry_diff_pct: str | None
+
+    @classmethod
+    def from_snapshot(cls, snap: DecisionSnapshot) -> DecisionSummaryResponse:
+        return cls(
+            current_decision=snap.current_decision,
+            action_label=snap.action_label,
+            action_severity=snap.action_severity,
+            plain_language_explanation=snap.plain_language_explanation,
+            failed_conditions=list(snap.failed_conditions),
+            is_entry_signal=snap.is_entry_signal,
+            is_exit_signal=snap.is_exit_signal,
+            has_open_position=snap.has_open_position,
+            raw_market_price=snap.raw_market_price,
+            entry_donchian_level=snap.entry_donchian_level,
+            exit_donchian_level=snap.exit_donchian_level,
+            atr=snap.atr,
+            equity=snap.equity,
+            price_vs_entry_diff_usd=snap.price_vs_entry_diff_usd,
+            price_vs_entry_diff_pct=snap.price_vs_entry_diff_pct,
+        )
+
+
 class DashboardSummaryResponse(BaseModel):
     model_config = ConfigDict(from_attributes=False)
 
@@ -466,6 +507,7 @@ class DashboardSummaryResponse(BaseModel):
     trade_stats: TradeStatsSummary
     warnings: list[str]
     system: SystemStatusResponse
+    decision: DecisionSummaryResponse | None = None
 
 
 # ---------------------------------------------------------------------------
@@ -639,6 +681,20 @@ async def get_dashboard_summary(
     if position is not None:
         pos_response = DashboardPositionResponse.from_position(position, now, latest_eval)
 
+    decision_snap = compute_decision(
+        signal=latest_eval.signal if latest_eval else None,
+        reasons=list(latest_eval.reasons) if latest_eval else [],
+        has_open_position=position is not None,
+        health_status=launch.status,
+        raw_market_price=latest_eval.raw_market_price if latest_eval else None,
+        entry_donchian_level=latest_eval.entry_donchian_level if latest_eval else None,
+        exit_donchian_level=latest_eval.exit_donchian_level if latest_eval else None,
+        ema_200=latest_eval.ema_200 if latest_eval else None,
+        ema_slope=latest_eval.ema_slope if latest_eval else None,
+        atr=latest_eval.atr if latest_eval else None,
+        equity=latest_eval.equity if latest_eval else None,
+    )
+
     return DashboardSummaryResponse(
         generated_at=now.isoformat(),
         launch_exists=True,
@@ -665,6 +721,7 @@ async def get_dashboard_summary(
                 else None
             ),
         ),
+        decision=DecisionSummaryResponse.from_snapshot(decision_snap),
     )
 
 

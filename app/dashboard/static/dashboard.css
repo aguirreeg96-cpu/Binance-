@@ -465,3 +465,107 @@ code {
   font-size: .72rem;
   padding: .2rem .55rem;
 }
+
+/* ---- Decision card ---- */
+.decision-card {
+  background: var(--bg-card);
+  border: 2px solid var(--border);
+  border-radius: var(--radius);
+  padding: 1.25rem 1.5rem;
+  margin-bottom: 1rem;
+  box-shadow: var(--shadow);
+}
+.decision-card.decision-neutral  { border-color: var(--border); }
+.decision-card.decision-success  { border-color: var(--green);  background: rgba(74,222,128,.04); }
+.decision-card.decision-info     { border-color: var(--blue);   background: rgba(96,165,250,.04); }
+.decision-card.decision-warning  { border-color: var(--orange); background: rgba(251,146,60,.04); }
+.decision-card.decision-danger   { border-color: var(--red);    background: rgba(248,113,113,.04); }
+
+.decision-action-label {
+  font-size: 2rem;
+  font-weight: 800;
+  letter-spacing: .04em;
+  margin-bottom: 1rem;
+  text-transform: uppercase;
+}
+.decision-neutral .decision-action-label  { color: var(--text-dim); }
+.decision-success .decision-action-label  { color: var(--green); }
+.decision-info .decision-action-label     { color: var(--blue); }
+.decision-warning .decision-action-label  { color: var(--orange); }
+.decision-danger .decision-action-label   { color: var(--red); }
+
+.decision-details-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(200px, 1fr));
+  gap: .6rem;
+  margin-bottom: 1rem;
+}
+.decision-detail-item {
+  background: rgba(255,255,255,.03);
+  border: 1px solid var(--border);
+  border-radius: 5px;
+  padding: .5rem .8rem;
+}
+.decision-detail-label {
+  font-size: .7rem;
+  color: var(--text-mute);
+  text-transform: uppercase;
+  letter-spacing: .04em;
+}
+.decision-detail-value {
+  font-size: .9rem;
+  color: var(--text);
+  margin-top: .15rem;
+  font-weight: 500;
+  word-break: break-all;
+}
+
+.decision-explanation {
+  font-size: .9rem;
+  color: var(--text-dim);
+  border-top: 1px solid var(--border);
+  padding-top: .75rem;
+  line-height: 1.6;
+}
+
+/* ---- No-signal reason box ---- */
+.no-signal-box {
+  background: var(--bg-alt);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 1rem 1.25rem;
+  margin-top: .5rem;
+}
+.no-signal-title {
+  font-size: .8rem;
+  font-weight: 700;
+  color: var(--text-dim);
+  text-transform: uppercase;
+  letter-spacing: .06em;
+  margin-bottom: .6rem;
+}
+.no-signal-diff {
+  font-size: .85rem;
+  color: var(--text);
+  margin-bottom: .5rem;
+}
+.no-signal-diff-pos { color: var(--green); font-weight: 600; }
+.no-signal-diff-neg { color: var(--red);   font-weight: 600; }
+.no-signal-conditions {
+  padding-left: 1.25rem;
+  font-size: .82rem;
+  color: var(--text-dim);
+  line-height: 1.8;
+  margin-bottom: .5rem;
+}
+.no-signal-conditions li { word-break: break-word; }
+.no-signal-atr {
+  font-size: .8rem;
+  color: var(--text-mute);
+  margin-top: .25rem;
+}
+
+@media (max-width: 640px) {
+  .decision-action-label { font-size: 1.5rem; }
+  .decision-details-grid { grid-template-columns: 1fr 1fr; }
+}
